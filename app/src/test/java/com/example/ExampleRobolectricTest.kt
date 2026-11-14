@@ -77,8 +77,9 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `verify accessibility permission remains active across task swipe when enabled in OS Settings`() {
+  fun `verify independent permission pipelines for Lock Screen, Screenshot, and Circle to Search across task swipe`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
+    val prefs = com.example.data.PuckPreferences(context)
     val componentString = "${context.packageName}/${com.example.service.PuckAccessibilityService::class.java.name}"
 
     android.provider.Settings.Secure.putString(
@@ -87,13 +88,37 @@ class ExampleRobolectricTest {
       componentString
     )
 
-    // Even when PuckAccessibilityService.instance is null (e.g., right after task swipe),
-    // LockScreenHelper must recognize the service as enabled in the OS and never fail.
-    assertEquals(true, com.example.util.LockScreenHelper.isAccessibilityServiceEnabled(context))
-    assertEquals(true, com.example.util.LockScreenHelper.isAccessibilityServiceActive(context))
-    assertEquals(true, com.example.util.LockScreenHelper.isLockPermissionGranted(context))
-    assertEquals(true, com.example.util.LockScreenHelper.performLock(context))
-    assertEquals(true, com.example.util.LockScreenHelper.performScreenshot(context))
-    assertEquals(true, com.example.util.CircleToSearchHelper.performCircleToSearch(context, 850L))
+    // 1. Verify authoritative OS check and independent feature latches for all 3 pipelines
+    assertEquals(true, com.example.util.PuckPermissionManager.isAccessibilityEnabledInOs(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.isLockScreenGranted(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.isScreenshotGranted(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.isCircleToSearchGranted(context))
+
+    // Verify synchronous disk-committed latches were set for all 3 features independently
+    assertEquals(true, prefs.isLockPermissionLatched)
+    assertEquals(true, prefs.isScreenshotPermissionLatched)
+    assertEquals(true, prefs.isCtsPermissionLatched)
+
+    // 2. Simulate transient binder disconnect after Recent Apps swipe:
+    // Even if OS Settings query transiently returns empty during a HyperOS task-swipe transition,
+    // the synchronous feature latches prevent false permission re-prompts.
+    android.provider.Settings.Secure.putString(
+      context.contentResolver,
+      android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+      ""
+    )
+    assertEquals(true, com.example.util.PuckPermissionManager.isLockScreenGranted(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.isScreenshotGranted(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.isCircleToSearchGranted(context))
+
+    // 3. Restore OS setting and verify all 3 execution pipelines accept actions without re-prompting
+    android.provider.Settings.Secure.putString(
+      context.contentResolver,
+      android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+      componentString
+    )
+    assertEquals(true, com.example.util.PuckPermissionManager.executeLockScreen(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.executeScreenshot(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.executeCircleToSearch(context, 850L))
   }
 }

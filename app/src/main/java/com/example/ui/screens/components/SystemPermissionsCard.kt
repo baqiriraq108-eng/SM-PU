@@ -26,12 +26,16 @@ fun SystemPermissionsCard(
     hasOverlayPermission: Boolean,
     isIgnoringBatteryOpt: Boolean,
     hasLockPermission: Boolean,
+    hasScreenshotPermission: Boolean = hasLockPermission,
+    hasCtsPermission: Boolean = hasLockPermission,
     isAccessibilityActive: Boolean,
     isDeviceAdminActive: Boolean,
     hasDndPermission: Boolean,
     onRequestOverlay: () -> Unit,
     onRequestIgnoreBatteryOpt: () -> Unit,
     onRequestAccessibility: () -> Unit,
+    onRequestScreenshotAccessibility: () -> Unit = onRequestAccessibility,
+    onRequestCtsAccessibility: () -> Unit = onRequestAccessibility,
     onRequestDeviceAdmin: () -> Unit,
     onRequestDndPermission: () -> Unit,
     onTestLockScreen: () -> Unit = {},
@@ -39,6 +43,9 @@ fun SystemPermissionsCard(
     modifier: Modifier = Modifier
 ) {
     var autoStart by remember { mutableStateOf(prefs.autoStart) }
+    val isLockGranted = hasLockPermission || prefs.isLockPermissionLatched
+    val isScreenshotGranted = hasScreenshotPermission || isAccessibilityActive || prefs.isScreenshotPermissionLatched
+    val isCtsGranted = hasCtsPermission || isAccessibilityActive || prefs.isCtsPermissionLatched
 
     Card(
         modifier = modifier
@@ -108,10 +115,10 @@ fun SystemPermissionsCard(
 
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
 
-                    // Row 3: Screen Lock & Screenshot Engine
+                    // Row 3: Lock Screen Engine (Accessibility or Device Admin)
                     LockPermissionRow(
                         isAccessibilityActive = isAccessibilityActive,
-                        hasLockPermission = hasLockPermission,
+                        hasLockPermission = isLockGranted,
                         isDeviceAdminActive = isDeviceAdminActive,
                         onRequestAccessibility = onRequestAccessibility,
                         onRequestDeviceAdmin = onRequestDeviceAdmin,
@@ -120,7 +127,33 @@ fun SystemPermissionsCard(
 
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
 
-                    // Row 4: Do Not Disturb Policy
+                    // Row 4: Instant Screenshot Engine
+                    PermissionRow(
+                        icon = Icons.Default.Screenshot,
+                        title = "Instant Screenshot",
+                        subtitle = if (isScreenshotGranted) "Active" else "Accessibility capture",
+                        isGranted = isScreenshotGranted,
+                        actionText = "Grant",
+                        onAction = onRequestScreenshotAccessibility,
+                        testTag = "btn_screenshot_permission"
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+
+                    // Row 5: Circle to Search Gesture Engine
+                    PermissionRow(
+                        icon = Icons.Default.TravelExplore,
+                        title = "Circle to Search",
+                        subtitle = if (isCtsGranted) "Active" else "Accessibility gesture",
+                        isGranted = isCtsGranted,
+                        actionText = "Grant",
+                        onAction = onRequestCtsAccessibility,
+                        testTag = "btn_cts_permission"
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(horizontal = 14.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+
+                    // Row 6: Do Not Disturb Policy
                     PermissionRow(
                         icon = Icons.Default.DoNotDisturbOn,
                         title = "DND Sync",

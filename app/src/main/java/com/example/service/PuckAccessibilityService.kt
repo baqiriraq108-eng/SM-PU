@@ -2,8 +2,6 @@ package com.example.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.app.Notification
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Path
@@ -14,20 +12,19 @@ import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
-import androidx.core.app.NotificationCompat
-import com.example.MainActivity
-import com.example.SmartPuckApp
 import com.example.util.PuckKeepAliveManager
+import com.example.util.PuckPermissionManager
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
 class PuckAccessibilityService : AccessibilityService() {
 
-    sealed class PendingAction {
-        object LockScreen : PendingAction()
-        object TakeScreenshot : PendingAction()
-        data class CircleToSearch(
-            val holdDurationMs: Long,
-            val onResult: ((Boolean) -> Unit)?
-        ) : PendingAction()
+    private class ConnectionWaiter(
+        val onConnected: (PuckAccessibilityService) -> Unit,
+        val onTimeout: () -> Unit
+    ) {
+        val completed = AtomicBoolean(false)
+        var timeoutRunnable: Runnable? = null
     }
 
     companion object {
@@ -39,17 +36,70 @@ class PuckAccessibilityService : AccessibilityService() {
         var isSystemBound: Boolean = false
             private set
 
-        @Volatile
-        private var pendingAction: PendingAction? = null
-
         private val mainHandler = Handler(Looper.getMainLooper())
+        private val connectionWaiters = CopyOnWriteArrayList<ConnectionWaiter>()
 
-        fun isRunning(): Boolean = instance != null && isSystemBound
+        /**
+         * Returns true only when the service instance exists AND the OS system_server
+         * IAccessibilityServiceConnection binder is actively attached via [onServiceConnected].
+         */
+        fun isServiceAliveAndBound(): Boolean = instance != null && isSystemBound
+
+        fun isRunning(): Boolean = isServiceAliveAndBound()
+
+        /**
+         * Registers an in-process callback that executes immediately if [isServiceAliveAndBound]
+         * is already true, or waits up to [timeoutMs] (default 2500ms) for [onServiceConnected]
+         * to fire without calling startService() on the AccessibilityService.
+         */
+        fun awaitBinderAndExecute(
+            timeoutMs: Long = 2500L,
+            onConnected: (PuckAccessibilityService) -> Unit,
+            onTimeout: () -> Unit
+        ) {
+            val current = instance
+            if (current != null && isSystemBound) {
+                onConnected(current)
+                return
+            }
+
+            val waiter = ConnectionWaiter(onConnected = onConnected, onTimeout = onTimeout)
+            val runnable = Runnable {
+                if (waiter.completed.compareAndSet(false, true)) {
+                    connectionWaiters.remove(waiter)
+                    val lateService = instance
+                    if (lateService != null && isSystemBound) {
+                        waiter.onConnected(lateService)
+                    } else {
+                        waiter.onTimeout()
+                    }
+                }
+            }
+            waiter.timeoutRunnable = runnable
+            connectionWaiters.add(waiter)
+            mainHandler.postDelayed(runnable, timeoutMs)
+        }
+
+        private fun flushConnectionWaiters(service: PuckAccessibilityService) {
+            for (waiter in connectionWaiters) {
+                if (waiter.completed.compareAndSet(false, true)) {
+                    waiter.timeoutRunnable?.let { mainHandler.removeCallbacks(it) }
+                    connectionWaiters.remove(waiter)
+                    mainHandler.post {
+                        waiter.onConnected(service)
+                    }
+                }
+            }
+        }
 
         fun lockScreen(): Boolean {
             val service = instance
             if (service != null && isSystemBound && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                return service.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+                return try {
+                    service.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
+                } catch (_: Exception) {
+                    false
+                }
             }
             return false
         }
@@ -57,86 +107,23 @@ class PuckAccessibilityService : AccessibilityService() {
         fun takeScreenshot(): Boolean {
             val service = instance
             if (service != null && isSystemBound && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                return service.performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT)
+                return try {
+                    service.performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT)
+                } catch (_: Exception) {
+                    false
+                }
             }
             return false
         }
 
         /**
-         * Enqueues a Lock Screen action to run immediately if bound, or as soon as the OS
-         * finishes rebinding [onServiceConnected].
-         */
-        fun enqueueOrPerformLock(): Boolean {
-            if (lockScreen()) return true
-            pendingAction = PendingAction.LockScreen
-            scheduleRetryFlush()
-            return true
-        }
-
-        /**
-         * Enqueues a Screenshot action to run immediately if bound, or as soon as the OS
-         * finishes rebinding [onServiceConnected].
-         */
-        fun enqueueOrPerformScreenshot(): Boolean {
-            if (takeScreenshot()) return true
-            pendingAction = PendingAction.TakeScreenshot
-            scheduleRetryFlush()
-            return true
-        }
-
-        /**
-         * Enqueues a Circle to Search hold gesture to run immediately if bound, or as soon as
-         * the OS finishes rebinding [onServiceConnected].
-         */
-        fun enqueueOrTriggerCircleToSearch(
-            holdDurationMs: Long = 850L,
-            onResult: ((Boolean) -> Unit)? = null
-        ): Boolean {
-            if (triggerCircleToSearch(holdDurationMs, onResult)) return true
-            pendingAction = PendingAction.CircleToSearch(holdDurationMs, onResult)
-            scheduleRetryFlush()
-            return true
-        }
-
-        private fun scheduleRetryFlush(attemptsRemaining: Int = 12) {
-            if (attemptsRemaining <= 0) {
-                val expired = pendingAction
-                pendingAction = null
-                if (expired is PendingAction.CircleToSearch) {
-                    expired.onResult?.invoke(false)
-                }
-                return
-            }
-            mainHandler.postDelayed({
-                if (pendingAction != null) {
-                    if (isRunning()) {
-                        flushPendingAction()
-                    } else {
-                        scheduleRetryFlush(attemptsRemaining - 1)
-                    }
-                }
-            }, 80L)
-        }
-
-        private fun flushPendingAction() {
-            val action = pendingAction ?: return
-            if (!isRunning()) return
-            pendingAction = null
-            when (action) {
-                is PendingAction.LockScreen -> lockScreen()
-                is PendingAction.TakeScreenshot -> takeScreenshot()
-                is PendingAction.CircleToSearch -> triggerCircleToSearch(action.holdDurationMs, action.onResult)
-            }
-        }
-
-        /**
          * Triggers Circle to Search on Android 16 and Xiaomi HyperOS 3 & 4 by dispatching
          * a stationary press-and-hold gesture on the system navigation handle / home bar.
-         * SystemUI and HyperOS launcher intercept this hold at the bottom center of the screen
-         * to launch the native Circle to Search overlay with live screen capture context.
+         * Never falls back to Voice Search or Assistant intents.
          */
         fun triggerCircleToSearch(
             holdDurationMs: Long = 850L,
+            allowRetryOnCancel: Boolean = true,
             onResult: ((Boolean) -> Unit)? = null
         ): Boolean {
             val service = instance ?: return false
@@ -169,7 +156,6 @@ class PuckAccessibilityService : AccessibilityService() {
                 val targetY = (screenH - bottomOffsetDp * density).coerceIn(1f, screenH - 2f)
 
                 // Pure stationary point Path so SystemUI registers a clean long-press on the handle
-                // without interpreting any upward swipe movement.
                 val holdPath = Path().apply {
                     moveTo(targetX, targetY)
                 }
@@ -180,7 +166,7 @@ class PuckAccessibilityService : AccessibilityService() {
                     .addStroke(stroke)
                     .build()
 
-                service.dispatchGesture(
+                val dispatched = service.dispatchGesture(
                     gesture,
                     object : GestureResultCallback() {
                         override fun onCompleted(gestureDescription: GestureDescription?) {
@@ -190,11 +176,25 @@ class PuckAccessibilityService : AccessibilityService() {
 
                         override fun onCancelled(gestureDescription: GestureDescription?) {
                             super.onCancelled(gestureDescription)
-                            onResult?.invoke(false)
+                            if (allowRetryOnCancel && isServiceAliveAndBound()) {
+                                mainHandler.postDelayed({
+                                    val retried = triggerCircleToSearch(
+                                        holdDurationMs = clampedDuration,
+                                        allowRetryOnCancel = false,
+                                        onResult = onResult
+                                    )
+                                    if (!retried) {
+                                        onResult?.invoke(false)
+                                    }
+                                }, 120L)
+                            } else {
+                                onResult?.invoke(false)
+                            }
                         }
                     },
                     mainHandler
                 )
+                dispatched
             } catch (_: Exception) {
                 false
             }
@@ -206,31 +206,22 @@ class PuckAccessibilityService : AccessibilityService() {
         instance = this
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        instance = this
-        if (isSystemBound) {
-            startForegroundSafely()
-            flushPendingAction()
-        }
-        return START_STICKY
-    }
-
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         isSystemBound = true
-        // Promote AccessibilityService to foreground priority so Xiaomi HyperOS and Android 16
-        // never kill the process or sever the system IAccessibilityServiceConnection binder on task swipe.
-        startForegroundSafely()
-        flushPendingAction()
+        // Synchronously commit all 3 feature permission latches (Lock Screen, Screenshot, Circle to Search)
+        PuckPermissionManager.onAccessibilityServiceConnected(applicationContext)
+        // Ensure FloatingPuckService maintains foreground process priority for the shared app process
+        PuckKeepAliveManager.ensureServiceAlive(applicationContext)
+        // Flush any in-process action callbacks waiting on binder connection
+        flushConnectionWaiters(this)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         instance = this
-        if (isSystemBound) {
-            startForegroundSafely()
-        }
+        // Keep the shared process alive via FloatingPuckService without calling startForeground() on AccessibilityService
         PuckKeepAliveManager.ensureServiceAlive(applicationContext)
     }
 
@@ -247,58 +238,8 @@ class PuckAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // No event interception required for global action dispatch
+        // No event interception required for global action and gesture dispatch
     }
 
     override fun onInterrupt() {}
-
-    private fun startForegroundSafely() {
-        try {
-            val notification = buildSharedNotification()
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                startForeground(
-                    1,
-                    notification,
-                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-                )
-            } else {
-                startForeground(1, notification)
-            }
-        } catch (_: Exception) {
-            try {
-                startForeground(1, buildSharedNotification())
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun buildSharedNotification(): Notification {
-        val appIntent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-        val appPendingIntent = PendingIntent.getActivity(
-            this, 0, appIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val lockIntent = Intent(this, FloatingPuckService::class.java).apply {
-            action = FloatingPuckService.ACTION_LOCK_SCREEN
-        }
-        val lockPendingIntent = PendingIntent.getService(
-            this, 1, lockIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        return NotificationCompat.Builder(this, SmartPuckApp.CHANNEL_ID)
-            .setContentTitle("Smart Puck Active")
-            .setContentText("Continuous background overlay running • Tap for options")
-            .setSmallIcon(android.R.drawable.ic_menu_preferences)
-            .setContentIntent(appPendingIntent)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .addAction(android.R.drawable.ic_lock_power_off, "Lock Screen", lockPendingIntent)
-            .addAction(android.R.drawable.ic_menu_manage, "Open App", appPendingIntent)
-            .setSound(null)
-            .setVibrate(null)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .build()
-    }
 }

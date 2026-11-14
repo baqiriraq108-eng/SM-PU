@@ -51,10 +51,9 @@ import com.example.MainActivity
 import com.example.R
 import com.example.SmartPuckApp
 import com.example.data.PuckPreferences
-import com.example.util.CircleToSearchHelper
 import com.example.util.DndSyncManager
-import com.example.util.LockScreenHelper
 import com.example.util.PuckKeepAliveManager
+import com.example.util.PuckPermissionManager
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -1160,46 +1159,73 @@ class FloatingPuckService : Service() {
     }
 
     private fun lockScreen() {
-        val isServiceEnabledInOS = LockScreenHelper.isLockPermissionGranted(this)
-        if (isServiceEnabledInOS) {
-            LockScreenHelper.performLock(this)
-            showHUD("🔒 Screen Locked")
-        } else {
+        if (!PuckPermissionManager.isLockScreenGranted(this)) {
             showHUD("⚠️ Enable Accessibility in Settings")
-            Toast.makeText(this, "Enable 'Smart Puck Accessibility Lock' in Accessibility settings", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                "Enable 'Smart Puck Accessibility Lock' in Accessibility settings",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+        PuckPermissionManager.executeLockScreen(this) { locked ->
+            if (locked) {
+                showHUD("🔒 Screen Locked")
+            }
         }
     }
 
     private fun takeInstantScreenshot() {
-        val isServiceEnabledInOS = LockScreenHelper.isAccessibilityServiceActive(this)
-        if (!isServiceEnabledInOS) {
+        if (!PuckPermissionManager.isScreenshotGranted(this)) {
             showHUD("⚠️ Enable Accessibility in Settings")
-            Toast.makeText(this, "Enable 'Smart Puck Accessibility Lock' in Accessibility settings", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                this,
+                "Enable 'Smart Puck Accessibility Lock' in Accessibility settings",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
 
         // 1. Instantly hide puck before capturing
         if (::puckContainer.isInitialized) {
-            puckContainer.visibility = View.INVISIBLE
+            puckContainer.visibility = View.GONE
+        }
+
+        val restorePuckRunnable = Runnable {
+            if (::puckContainer.isInitialized) {
+                puckContainer.visibility = View.VISIBLE
+                puckContainer.alpha = prefs.puckOpacity / 100f
+            }
         }
 
         // 2. Micro-delay so the screen renders completely clean without puck or menu
         handler.postDelayed({
-            LockScreenHelper.performScreenshot(this)
-            // 3. Restore puck visibility cleanly after screen capture completes
-            handler.postDelayed({
-                if (::puckContainer.isInitialized) {
-                    puckContainer.visibility = View.VISIBLE
-                    puckContainer.alpha = prefs.puckOpacity / 100f
+            PuckPermissionManager.executeScreenshot(this) { captured ->
+                handler.removeCallbacks(restorePuckRunnable)
+                if (captured) {
+                    // 3. Restore puck visibility cleanly after screen capture completes
+                    handler.postDelayed(restorePuckRunnable, 750L)
+                } else {
+                    // Immediate restore on failure so puck is never left hidden
+                    restorePuckRunnable.run()
                 }
-            }, 750)
-        }, 150)
+            }
+        }, 150L)
     }
 
     private fun triggerCircleToSearchFromPuck() {
         vibrateDoubleTap()
         hidePuckMenu()
         dismissHudFast()
+
+        if (!PuckPermissionManager.isCircleToSearchGranted(this)) {
+            Toast.makeText(
+                this,
+                "Enable 'Smart Puck Accessibility Lock' in Accessibility settings for Circle to Search",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
 
         val holdDurationMs = prefs.getEffectiveCtsHoldDurationMs().toLong().coerceIn(400L, 1500L)
 
@@ -1231,12 +1257,16 @@ class FloatingPuckService : Service() {
         // 2. Wait 160ms for WindowManager & SurfaceFlinger to finish tearing down the menu/puck
         // touch state, then dispatch the bottom navigation bar press-and-hold gesture.
         handler.postDelayed({
-            CircleToSearchHelper.performCircleToSearch(this, holdDurationMs) {
+            PuckPermissionManager.executeCircleToSearch(this, holdDurationMs) { success ->
                 handler.removeCallbacks(restorePuckRunnable)
-                handler.postDelayed(restorePuckRunnable, 260L)
+                if (success) {
+                    handler.postDelayed(restorePuckRunnable, 260L)
+                } else {
+                    restorePuckRunnable.run()
+                }
             }
-            // Safety fallback to guarantee the puck stays hidden during the full hold + buffer, then restores
-            handler.postDelayed(restorePuckRunnable, holdDurationMs + 400L)
+            // Safety fallback to guarantee the puck is restored after hold + recovery buffer
+            handler.postDelayed(restorePuckRunnable, holdDurationMs + 2800L)
         }, 160L)
     }
 

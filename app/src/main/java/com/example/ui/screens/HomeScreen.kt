@@ -35,8 +35,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.PuckPreferences
 import com.example.ui.screens.components.*
 import com.example.util.DndSyncManager
-import com.example.util.LockScreenHelper
 import com.example.util.PuckKeepAliveManager
+import com.example.util.PuckPermissionManager
 
 enum class SettingsHubCategory(val label: String, val icon: String) {
     ALL("All", "✦"),
@@ -56,12 +56,18 @@ fun HomeScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
+    val isLockLatched by prefs.isLockPermissionLatchedState.collectAsState()
+    val isScreenshotLatched by prefs.isScreenshotPermissionLatchedState.collectAsState()
+    val isCtsLatched by prefs.isCtsPermissionLatchedState.collectAsState()
+
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasWriteSettingsPermission by remember { mutableStateOf(Settings.System.canWrite(context)) }
     var isIgnoringBatteryOpt by remember { mutableStateOf(PuckKeepAliveManager.isBatteryOptimizationIgnored(context)) }
-    var hasLockPermission by remember { mutableStateOf(LockScreenHelper.isLockPermissionGranted(context)) }
-    var isAccessibilityActive by remember { mutableStateOf(LockScreenHelper.isAccessibilityServiceActive(context)) }
-    var isDeviceAdminActive by remember { mutableStateOf(LockScreenHelper.isDeviceAdminActive(context)) }
+    var hasLockPermission by remember { mutableStateOf(PuckPermissionManager.isLockScreenGranted(context)) }
+    var hasScreenshotPermission by remember { mutableStateOf(PuckPermissionManager.isScreenshotGranted(context)) }
+    var hasCtsPermission by remember { mutableStateOf(PuckPermissionManager.isCircleToSearchGranted(context)) }
+    var isAccessibilityActive by remember { mutableStateOf(PuckPermissionManager.isAccessibilityServiceActive(context)) }
+    var isDeviceAdminActive by remember { mutableStateOf(PuckPermissionManager.isDeviceAdminActive(context)) }
     var hasDndPermission by remember { mutableStateOf(DndSyncManager.isNotificationPolicyAccessGranted(context)) }
 
     val isServiceEnabled by prefs.isServiceEnabledState.collectAsState()
@@ -79,13 +85,15 @@ fun HomeScreen(
         hasOverlayPermission = Settings.canDrawOverlays(context)
         hasWriteSettingsPermission = Settings.System.canWrite(context)
         isIgnoringBatteryOpt = PuckKeepAliveManager.isBatteryOptimizationIgnored(context)
-        hasLockPermission = LockScreenHelper.isLockPermissionGranted(context)
-        isAccessibilityActive = LockScreenHelper.isAccessibilityServiceActive(context)
-        isDeviceAdminActive = LockScreenHelper.isDeviceAdminActive(context)
+        hasLockPermission = PuckPermissionManager.isLockScreenGranted(context)
+        hasScreenshotPermission = PuckPermissionManager.isScreenshotGranted(context)
+        hasCtsPermission = PuckPermissionManager.isCircleToSearchGranted(context)
+        isAccessibilityActive = PuckPermissionManager.isAccessibilityServiceActive(context)
+        isDeviceAdminActive = PuckPermissionManager.isDeviceAdminActive(context)
         hasDndPermission = DndSyncManager.isNotificationPolicyAccessGranted(context)
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(isLockLatched, isScreenshotLatched, isCtsLatched) {
         refreshAllStates()
     }
 
@@ -314,7 +322,7 @@ fun HomeScreen(
                         onRequestOverlay = { requestOverlayPermission(context) },
                         onRequestWriteSettings = { requestWriteSettingsPermission(context) },
                         onRequestDnd = { DndSyncManager.openDndSettings(context) },
-                        onRequestLock = { LockScreenHelper.requestAccessibilityPermission(context) },
+                        onRequestLock = { PuckPermissionManager.requestLockScreenAccessibility(context) },
                         onRequestBattery = {
                             prefs.isBatteryOptPermanentlyGranted = true
                             PuckKeepAliveManager.requestIgnoreBatteryOptimizations(context)
@@ -364,8 +372,10 @@ fun HomeScreen(
                         prefs = prefs,
                         hasOverlayPermission = hasOverlayPermission,
                         isIgnoringBatteryOpt = isIgnoringBatteryOpt,
-                        hasLockPermission = hasLockPermission,
-                        isAccessibilityActive = isAccessibilityActive,
+                        hasLockPermission = hasLockPermission || isLockLatched,
+                        hasScreenshotPermission = hasScreenshotPermission || isScreenshotLatched,
+                        hasCtsPermission = hasCtsPermission || isCtsLatched,
+                        isAccessibilityActive = isAccessibilityActive || isScreenshotLatched || isCtsLatched,
                         isDeviceAdminActive = isDeviceAdminActive,
                         hasDndPermission = hasDndPermission,
                         onRequestOverlay = { requestOverlayPermission(context) },
@@ -373,11 +383,13 @@ fun HomeScreen(
                             prefs.isBatteryOptPermanentlyGranted = true
                             PuckKeepAliveManager.requestIgnoreBatteryOptimizations(context)
                         },
-                        onRequestAccessibility = { LockScreenHelper.requestAccessibilityPermission(context) },
-                        onRequestDeviceAdmin = { LockScreenHelper.requestDeviceAdminPermission(context) },
+                        onRequestAccessibility = { PuckPermissionManager.requestLockScreenAccessibility(context) },
+                        onRequestScreenshotAccessibility = { PuckPermissionManager.requestScreenshotAccessibility(context) },
+                        onRequestCtsAccessibility = { PuckPermissionManager.requestCircleToSearchAccessibility(context) },
+                        onRequestDeviceAdmin = { PuckPermissionManager.requestDeviceAdmin(context) },
                         onRequestDndPermission = { DndSyncManager.openDndSettings(context) },
                         onTestLockScreen = {
-                            val locked = LockScreenHelper.performLock(context)
+                            val locked = PuckPermissionManager.executeLockScreen(context)
                             if (locked) {
                                 Toast.makeText(context, "Screen Locked", Toast.LENGTH_SHORT).show()
                             } else {

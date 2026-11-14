@@ -68,6 +68,15 @@ class PuckPreferences(context: Context) {
     private val _ctsCustomHoldDurationMsState = MutableStateFlow(ctsCustomHoldDurationMs)
     val ctsCustomHoldDurationMsState: StateFlow<Int> = _ctsCustomHoldDurationMsState.asStateFlow()
 
+    private val _isLockPermissionLatchedState = MutableStateFlow(isLockPermissionLatched)
+    val isLockPermissionLatchedState: StateFlow<Boolean> = _isLockPermissionLatchedState.asStateFlow()
+
+    private val _isScreenshotPermissionLatchedState = MutableStateFlow(isScreenshotPermissionLatched)
+    val isScreenshotPermissionLatchedState: StateFlow<Boolean> = _isScreenshotPermissionLatchedState.asStateFlow()
+
+    private val _isCtsPermissionLatchedState = MutableStateFlow(isCtsPermissionLatched)
+    val isCtsPermissionLatchedState: StateFlow<Boolean> = _isCtsPermissionLatchedState.asStateFlow()
+
     private fun notifyState() {
         _isServiceEnabledState.value = isServiceEnabled
         _puckColorState.value = puckColor
@@ -85,19 +94,67 @@ class PuckPreferences(context: Context) {
         _doubleTapCustomDelayMsState.value = doubleTapCustomDelayMs
         _ctsHoldModeState.value = ctsHoldMode
         _ctsCustomHoldDurationMsState.value = ctsCustomHoldDurationMs
+        _isLockPermissionLatchedState.value = isLockPermissionLatched
+        _isScreenshotPermissionLatchedState.value = isScreenshotPermissionLatched
+        _isCtsPermissionLatchedState.value = isCtsPermissionLatched
     }
 
     var isServiceEnabled: Boolean
         get() = prefs.getBoolean("service_enabled", false)
-        set(value) = prefs.edit().putBoolean("service_enabled", value).apply()
+        set(value) {
+            prefs.edit().putBoolean("service_enabled", value).commit()
+        }
 
     var autoStart: Boolean
         get() = prefs.getBoolean("auto_start", false)
-        set(value) = prefs.edit().putBoolean("auto_start", value).apply()
+        set(value) {
+            prefs.edit().putBoolean("auto_start", value).commit()
+        }
 
     var isBatteryOptPermanentlyGranted: Boolean
         get() = prefs.getBoolean("perm_battery_opt_granted", false)
-        set(value) = prefs.edit().putBoolean("perm_battery_opt_granted", value).apply()
+        set(value) {
+            prefs.edit().putBoolean("perm_battery_opt_granted", value).commit()
+        }
+
+    var isLockPermissionLatched: Boolean
+        get() = prefs.getBoolean(KEY_LATCH_LOCK_SCREEN, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_LATCH_LOCK_SCREEN, value).commit()
+            _isLockPermissionLatchedState.value = value
+        }
+
+    var isScreenshotPermissionLatched: Boolean
+        get() = prefs.getBoolean(KEY_LATCH_SCREENSHOT, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_LATCH_SCREENSHOT, value).commit()
+            _isScreenshotPermissionLatchedState.value = value
+        }
+
+    var isCtsPermissionLatched: Boolean
+        get() = prefs.getBoolean(KEY_LATCH_CTS, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_LATCH_CTS, value).commit()
+            _isCtsPermissionLatchedState.value = value
+        }
+
+    fun latchAllAccessibilityPermissions() {
+        prefs.edit()
+            .putBoolean(KEY_LATCH_LOCK_SCREEN, true)
+            .putBoolean(KEY_LATCH_SCREENSHOT, true)
+            .putBoolean(KEY_LATCH_CTS, true)
+            .commit()
+        _isLockPermissionLatchedState.value = true
+        _isScreenshotPermissionLatchedState.value = true
+        _isCtsPermissionLatchedState.value = true
+    }
+
+    fun latchLockPermission() {
+        prefs.edit()
+            .putBoolean(KEY_LATCH_LOCK_SCREEN, true)
+            .commit()
+        _isLockPermissionLatchedState.value = true
+    }
 
     var hasShownInitialPrompt: Boolean
         get() = prefs.getBoolean("has_shown_initial_prompt", false)
@@ -272,6 +329,10 @@ class PuckPreferences(context: Context) {
         set(value) = prefs.edit().putString("puck_style", value).apply()
 
     companion object {
+        const val KEY_LATCH_LOCK_SCREEN = "perm_latch_lock_screen_v3"
+        const val KEY_LATCH_SCREENSHOT = "perm_latch_screenshot_v3"
+        const val KEY_LATCH_CTS = "perm_latch_cts_v3"
+
         const val SPEED_MODE_AUTO = "auto"
         const val SPEED_MODE_MANUAL = "manual"
         const val MIN_DOUBLE_TAP_MS = 140
