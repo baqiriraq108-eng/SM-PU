@@ -33,10 +33,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.PuckPreferences
+import com.example.service.PuckAccessibilityService
 import com.example.ui.screens.components.*
 import com.example.util.DndSyncManager
 import com.example.util.PuckKeepAliveManager
 import com.example.util.PuckPermissionManager
+import kotlinx.coroutines.delay
 
 enum class SettingsHubCategory(val label: String, val icon: String) {
     ALL("All", "✦"),
@@ -56,17 +58,15 @@ fun HomeScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    val isLockLatched by prefs.isLockPermissionLatchedState.collectAsState()
-    val isScreenshotLatched by prefs.isScreenshotPermissionLatchedState.collectAsState()
-    val isCtsLatched by prefs.isCtsPermissionLatchedState.collectAsState()
+    val isAccessibilityBound by PuckAccessibilityService.isBoundState.collectAsState()
 
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
     var hasWriteSettingsPermission by remember { mutableStateOf(Settings.System.canWrite(context)) }
     var isIgnoringBatteryOpt by remember { mutableStateOf(PuckKeepAliveManager.isBatteryOptimizationIgnored(context)) }
+    var isAccessibilityEnabledInOs by remember { mutableStateOf(PuckPermissionManager.isAccessibilityEnabledInOs(context)) }
     var hasLockPermission by remember { mutableStateOf(PuckPermissionManager.isLockScreenGranted(context)) }
     var hasScreenshotPermission by remember { mutableStateOf(PuckPermissionManager.isScreenshotGranted(context)) }
     var hasCtsPermission by remember { mutableStateOf(PuckPermissionManager.isCircleToSearchGranted(context)) }
-    var isAccessibilityActive by remember { mutableStateOf(PuckPermissionManager.isAccessibilityServiceActive(context)) }
     var isDeviceAdminActive by remember { mutableStateOf(PuckPermissionManager.isDeviceAdminActive(context)) }
     var hasDndPermission by remember { mutableStateOf(DndSyncManager.isNotificationPolicyAccessGranted(context)) }
 
@@ -85,16 +85,22 @@ fun HomeScreen(
         hasOverlayPermission = Settings.canDrawOverlays(context)
         hasWriteSettingsPermission = Settings.System.canWrite(context)
         isIgnoringBatteryOpt = PuckKeepAliveManager.isBatteryOptimizationIgnored(context)
+        isAccessibilityEnabledInOs = PuckPermissionManager.isAccessibilityEnabledInOs(context)
         hasLockPermission = PuckPermissionManager.isLockScreenGranted(context)
         hasScreenshotPermission = PuckPermissionManager.isScreenshotGranted(context)
         hasCtsPermission = PuckPermissionManager.isCircleToSearchGranted(context)
-        isAccessibilityActive = PuckPermissionManager.isAccessibilityServiceActive(context)
         isDeviceAdminActive = PuckPermissionManager.isDeviceAdminActive(context)
         hasDndPermission = DndSyncManager.isNotificationPolicyAccessGranted(context)
     }
 
-    LaunchedEffect(isLockLatched, isScreenshotLatched, isCtsLatched) {
+    LaunchedEffect(isAccessibilityBound) {
         refreshAllStates()
+        if (isAccessibilityEnabledInOs && !PuckAccessibilityService.isServiceAliveAndBound()) {
+            if (PuckPermissionManager.trySelfHealAccessibilityBinder(context)) {
+                delay(400L)
+                refreshAllStates()
+            }
+        }
     }
 
     DisposableEffect(lifecycleOwner) {
@@ -372,10 +378,11 @@ fun HomeScreen(
                         prefs = prefs,
                         hasOverlayPermission = hasOverlayPermission,
                         isIgnoringBatteryOpt = isIgnoringBatteryOpt,
-                        hasLockPermission = hasLockPermission || isLockLatched,
-                        hasScreenshotPermission = hasScreenshotPermission || isScreenshotLatched,
-                        hasCtsPermission = hasCtsPermission || isCtsLatched,
-                        isAccessibilityActive = isAccessibilityActive || isScreenshotLatched || isCtsLatched,
+                        hasLockPermission = hasLockPermission,
+                        hasScreenshotPermission = hasScreenshotPermission,
+                        hasCtsPermission = hasCtsPermission,
+                        isAccessibilityActive = isAccessibilityBound,
+                        isAccessibilityEnabledInOs = isAccessibilityEnabledInOs,
                         isDeviceAdminActive = isDeviceAdminActive,
                         hasDndPermission = hasDndPermission,
                         onRequestOverlay = { requestOverlayPermission(context) },

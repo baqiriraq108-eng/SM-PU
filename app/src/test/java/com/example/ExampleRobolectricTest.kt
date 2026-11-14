@@ -77,46 +77,37 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `verify independent permission pipelines for Lock Screen, Screenshot, and Circle to Search across task swipe`() {
+  fun `verify independent honest permission pipelines and directBootAware removal`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val prefs = com.example.data.PuckPreferences(context)
+    val componentName = android.content.ComponentName(
+      context,
+      com.example.service.PuckAccessibilityService::class.java
+    )
     val componentString = "${context.packageName}/${com.example.service.PuckAccessibilityService::class.java.name}"
 
+    // 1. Verify directBootAware is false on PuckAccessibilityService & FloatingPuckService
+    val serviceInfo = context.packageManager.getServiceInfo(componentName, 0)
+    assertEquals(false, serviceInfo.directBootAware)
+
+    // 2. When OS Settings toggle is ON but binder is dead (!isServiceAliveAndBound),
+    // honest checks MUST detect zombie ("Not working") state and NOT claim granted!
     android.provider.Settings.Secure.putString(
       context.contentResolver,
       android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
       componentString
     )
-
-    // 1. Verify authoritative OS check and independent feature latches for all 3 pipelines
     assertEquals(true, com.example.util.PuckPermissionManager.isAccessibilityEnabledInOs(context))
-    assertEquals(true, com.example.util.PuckPermissionManager.isLockScreenGranted(context))
-    assertEquals(true, com.example.util.PuckPermissionManager.isScreenshotGranted(context))
-    assertEquals(true, com.example.util.PuckPermissionManager.isCircleToSearchGranted(context))
+    assertEquals(false, com.example.util.PuckPermissionManager.isLockScreenGranted(context))
+    assertEquals(false, com.example.util.PuckPermissionManager.isScreenshotGranted(context))
+    assertEquals(false, com.example.util.PuckPermissionManager.isCircleToSearchGranted(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.isLockScreenZombieState(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.isScreenshotZombieState(context))
+    assertEquals(true, com.example.util.PuckPermissionManager.isCircleToSearchZombieState(context))
 
-    // Verify synchronous disk-committed latches were set for all 3 features independently
-    assertEquals(true, prefs.isLockPermissionLatched)
-    assertEquals(true, prefs.isScreenshotPermissionLatched)
-    assertEquals(true, prefs.isCtsPermissionLatched)
+    // 3. Verify WRITE_SECURE_SETTINGS gating: returns false if permission not held
+    assertEquals(false, com.example.util.PuckPermissionManager.trySelfHealAccessibilityBinder(context))
 
-    // 2. Simulate transient binder disconnect after Recent Apps swipe:
-    // Even if OS Settings query transiently returns empty during a HyperOS task-swipe transition,
-    // the synchronous feature latches prevent false permission re-prompts.
-    android.provider.Settings.Secure.putString(
-      context.contentResolver,
-      android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-      ""
-    )
-    assertEquals(true, com.example.util.PuckPermissionManager.isLockScreenGranted(context))
-    assertEquals(true, com.example.util.PuckPermissionManager.isScreenshotGranted(context))
-    assertEquals(true, com.example.util.PuckPermissionManager.isCircleToSearchGranted(context))
-
-    // 3. Restore OS setting and verify all 3 execution pipelines accept actions without re-prompting
-    android.provider.Settings.Secure.putString(
-      context.contentResolver,
-      android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-      componentString
-    )
+    // 4. Verify in-process queued recovery accepts actions when OS setting is ON
     assertEquals(true, com.example.util.PuckPermissionManager.executeLockScreen(context))
     assertEquals(true, com.example.util.PuckPermissionManager.executeScreenshot(context))
     assertEquals(true, com.example.util.PuckPermissionManager.executeCircleToSearch(context, 850L))

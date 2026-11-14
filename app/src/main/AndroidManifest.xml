@@ -44,7 +44,6 @@
             android:enabled="true"
             android:exported="false"
             android:stopWithTask="false"
-            android:directBootAware="true"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
@@ -59,7 +58,7 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
-                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.USER_PRESENT" />
             </intent-filter>
@@ -93,7 +92,6 @@
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:label="Smart Puck Accessibility Lock"
             android:stopWithTask="false"
-            android:directBootAware="true"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

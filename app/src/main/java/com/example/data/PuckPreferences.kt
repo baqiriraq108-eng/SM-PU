@@ -3,20 +3,37 @@ package com.example.data
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Color
+import android.os.Build
+import android.os.UserManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class PuckPreferences(context: Context) {
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("smart_puck_prefs", Context.MODE_PRIVATE)
+    private val appContext: Context = context.applicationContext ?: context
+    private val prefs: SharedPreferences? = try {
+        val unlocked = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            appContext.getSystemService(UserManager::class.java)?.isUserUnlocked != false
+        } else {
+            true
+        }
+        if (unlocked) {
+            appContext.getSharedPreferences("smart_puck_prefs", Context.MODE_PRIVATE)
+        } else {
+            null
+        }
+    } catch (_: Throwable) {
+        null
+    }
 
     private val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
         notifyState()
     }
 
     init {
-        prefs.registerOnSharedPreferenceChangeListener(listener)
+        try {
+            prefs?.registerOnSharedPreferenceChangeListener(listener)
+        } catch (_: Throwable) {}
     }
 
     // State flows for Compose reactive updates
@@ -100,109 +117,117 @@ class PuckPreferences(context: Context) {
     }
 
     var isServiceEnabled: Boolean
-        get() = prefs.getBoolean("service_enabled", false)
+        get() = prefs?.getBoolean("service_enabled", false) ?: false
         set(value) {
-            prefs.edit().putBoolean("service_enabled", value).commit()
+            try { prefs?.edit()?.putBoolean("service_enabled", value)?.commit() } catch (_: Throwable) {}
         }
 
     var autoStart: Boolean
-        get() = prefs.getBoolean("auto_start", false)
+        get() = prefs?.getBoolean("auto_start", false) ?: false
         set(value) {
-            prefs.edit().putBoolean("auto_start", value).commit()
+            try { prefs?.edit()?.putBoolean("auto_start", value)?.commit() } catch (_: Throwable) {}
         }
 
     var isBatteryOptPermanentlyGranted: Boolean
-        get() = prefs.getBoolean("perm_battery_opt_granted", false)
+        get() = prefs?.getBoolean("perm_battery_opt_granted", false) ?: false
         set(value) {
-            prefs.edit().putBoolean("perm_battery_opt_granted", value).commit()
+            try { prefs?.edit()?.putBoolean("perm_battery_opt_granted", value)?.commit() } catch (_: Throwable) {}
         }
 
     var isLockPermissionLatched: Boolean
-        get() = prefs.getBoolean(KEY_LATCH_LOCK_SCREEN, false)
+        get() = prefs?.getBoolean(KEY_LATCH_LOCK_SCREEN, false) ?: false
         set(value) {
-            prefs.edit().putBoolean(KEY_LATCH_LOCK_SCREEN, value).commit()
+            try { prefs?.edit()?.putBoolean(KEY_LATCH_LOCK_SCREEN, value)?.commit() } catch (_: Throwable) {}
             _isLockPermissionLatchedState.value = value
         }
 
     var isScreenshotPermissionLatched: Boolean
-        get() = prefs.getBoolean(KEY_LATCH_SCREENSHOT, false)
+        get() = prefs?.getBoolean(KEY_LATCH_SCREENSHOT, false) ?: false
         set(value) {
-            prefs.edit().putBoolean(KEY_LATCH_SCREENSHOT, value).commit()
+            try { prefs?.edit()?.putBoolean(KEY_LATCH_SCREENSHOT, value)?.commit() } catch (_: Throwable) {}
             _isScreenshotPermissionLatchedState.value = value
         }
 
     var isCtsPermissionLatched: Boolean
-        get() = prefs.getBoolean(KEY_LATCH_CTS, false)
+        get() = prefs?.getBoolean(KEY_LATCH_CTS, false) ?: false
         set(value) {
-            prefs.edit().putBoolean(KEY_LATCH_CTS, value).commit()
+            try { prefs?.edit()?.putBoolean(KEY_LATCH_CTS, value)?.commit() } catch (_: Throwable) {}
             _isCtsPermissionLatchedState.value = value
         }
 
     fun latchAllAccessibilityPermissions() {
-        prefs.edit()
-            .putBoolean(KEY_LATCH_LOCK_SCREEN, true)
-            .putBoolean(KEY_LATCH_SCREENSHOT, true)
-            .putBoolean(KEY_LATCH_CTS, true)
-            .commit()
+        try {
+            prefs?.edit()
+                ?.putBoolean(KEY_LATCH_LOCK_SCREEN, true)
+                ?.putBoolean(KEY_LATCH_SCREENSHOT, true)
+                ?.putBoolean(KEY_LATCH_CTS, true)
+                ?.commit()
+        } catch (_: Throwable) {}
         _isLockPermissionLatchedState.value = true
         _isScreenshotPermissionLatchedState.value = true
         _isCtsPermissionLatchedState.value = true
     }
 
     fun latchLockPermission() {
-        prefs.edit()
-            .putBoolean(KEY_LATCH_LOCK_SCREEN, true)
-            .commit()
+        try {
+            prefs?.edit()
+                ?.putBoolean(KEY_LATCH_LOCK_SCREEN, true)
+                ?.commit()
+        } catch (_: Throwable) {}
         _isLockPermissionLatchedState.value = true
     }
 
     var hasShownInitialPrompt: Boolean
-        get() = prefs.getBoolean("has_shown_initial_prompt", false)
-        set(value) = prefs.edit().putBoolean("has_shown_initial_prompt", value).apply()
+        get() = prefs?.getBoolean("has_shown_initial_prompt", false) ?: false
+        set(value) { prefs?.edit()?.putBoolean("has_shown_initial_prompt", value)?.apply() }
 
     var swapSides: Boolean
-        get() = prefs.getBoolean("swap_sides", false)
-        set(value) = prefs.edit().putBoolean("swap_sides", value).apply()
+        get() = prefs?.getBoolean("swap_sides", false) ?: false
+        set(value) { prefs?.edit()?.putBoolean("swap_sides", value)?.apply() }
 
     var swapAxes: Boolean
-        get() = prefs.getBoolean("swap_control_axes", false)
-        set(value) = prefs.edit().putBoolean("swap_control_axes", value).apply()
+        get() = prefs?.getBoolean("swap_control_axes", false) ?: false
+        set(value) { prefs?.edit()?.putBoolean("swap_control_axes", value)?.apply() }
 
     var axisLockThresholdPx: Int
-        get() = prefs.getInt("axis_lock_threshold_px", 4)
-        set(value) = prefs.edit().putInt("axis_lock_threshold_px", value.coerceIn(2, 16)).apply()
+        get() = prefs?.getInt("axis_lock_threshold_px", 4) ?: 4
+        set(value) { prefs?.edit()?.putInt("axis_lock_threshold_px", value.coerceIn(2, 16))?.apply() }
 
     var doubleTapCtsEnabled: Boolean
-        get() = prefs.getBoolean("double_tap_cts_enabled", true)
-        set(value) = prefs.edit().putBoolean("double_tap_cts_enabled", value).apply()
+        get() = prefs?.getBoolean("double_tap_cts_enabled", true) ?: true
+        set(value) { prefs?.edit()?.putBoolean("double_tap_cts_enabled", value)?.apply() }
 
     var doubleTapSpeedMode: String
-        get() = prefs.getString("double_tap_speed_mode", SPEED_MODE_AUTO) ?: SPEED_MODE_AUTO
+        get() = prefs?.getString("double_tap_speed_mode", SPEED_MODE_AUTO) ?: SPEED_MODE_AUTO
         set(value) {
             val normalized = if (value == SPEED_MODE_MANUAL) SPEED_MODE_MANUAL else SPEED_MODE_AUTO
-            prefs.edit().putString("double_tap_speed_mode", normalized).apply()
+            prefs?.edit()?.putString("double_tap_speed_mode", normalized)?.apply()
         }
 
     var doubleTapCustomDelayMs: Int
-        get() = prefs.getInt("double_tap_custom_delay_ms", DEFAULT_MANUAL_DOUBLE_TAP_MS)
-        set(value) = prefs.edit().putInt(
-            "double_tap_custom_delay_ms",
-            value.coerceIn(MIN_DOUBLE_TAP_MS, MAX_DOUBLE_TAP_MS)
-        ).apply()
+        get() = prefs?.getInt("double_tap_custom_delay_ms", DEFAULT_MANUAL_DOUBLE_TAP_MS) ?: DEFAULT_MANUAL_DOUBLE_TAP_MS
+        set(value) {
+            prefs?.edit()?.putInt(
+                "double_tap_custom_delay_ms",
+                value.coerceIn(MIN_DOUBLE_TAP_MS, MAX_DOUBLE_TAP_MS)
+            )?.apply()
+        }
 
     var ctsHoldMode: String
-        get() = prefs.getString("cts_hold_mode", SPEED_MODE_AUTO) ?: SPEED_MODE_AUTO
+        get() = prefs?.getString("cts_hold_mode", SPEED_MODE_AUTO) ?: SPEED_MODE_AUTO
         set(value) {
             val normalized = if (value == SPEED_MODE_MANUAL) SPEED_MODE_MANUAL else SPEED_MODE_AUTO
-            prefs.edit().putString("cts_hold_mode", normalized).apply()
+            prefs?.edit()?.putString("cts_hold_mode", normalized)?.apply()
         }
 
     var ctsCustomHoldDurationMs: Int
-        get() = prefs.getInt("cts_custom_hold_duration_ms", DEFAULT_AUTO_CTS_HOLD_MS)
-        set(value) = prefs.edit().putInt(
-            "cts_custom_hold_duration_ms",
-            value.coerceIn(MIN_CTS_HOLD_MS, MAX_CTS_HOLD_MS)
-        ).apply()
+        get() = prefs?.getInt("cts_custom_hold_duration_ms", DEFAULT_AUTO_CTS_HOLD_MS) ?: DEFAULT_AUTO_CTS_HOLD_MS
+        set(value) {
+            prefs?.edit()?.putInt(
+                "cts_custom_hold_duration_ms",
+                value.coerceIn(MIN_CTS_HOLD_MS, MAX_CTS_HOLD_MS)
+            )?.apply()
+        }
 
     /**
      * Resolves the active double-tap interval in milliseconds:
@@ -242,60 +267,60 @@ class PuckPreferences(context: Context) {
     fun getAutomaticCtsHoldDurationMs(): Int = DEFAULT_AUTO_CTS_HOLD_MS
 
     var horizontalBrightness: Boolean
-        get() = prefs.getBoolean("horizontal_brightness", true)
-        set(value) = prefs.edit().putBoolean("horizontal_brightness", value).apply()
+        get() = prefs?.getBoolean("horizontal_brightness", true) ?: true
+        set(value) { prefs?.edit()?.putBoolean("horizontal_brightness", value)?.apply() }
 
     var horizontalVolume: Boolean
-        get() = prefs.getBoolean("horizontal_volume", true)
-        set(value) = prefs.edit().putBoolean("horizontal_volume", value).apply()
+        get() = prefs?.getBoolean("horizontal_volume", true) ?: true
+        set(value) { prefs?.edit()?.putBoolean("horizontal_volume", value)?.apply() }
 
     var puckSize: Int
-        get() = prefs.getInt("puck_size", 60)
-        set(value) = prefs.edit().putInt("puck_size", value.coerceIn(36, 100)).apply()
+        get() = prefs?.getInt("puck_size", 60) ?: 60
+        set(value) { prefs?.edit()?.putInt("puck_size", value.coerceIn(36, 100))?.apply() }
 
     var puckOpacity: Int
-        get() = prefs.getInt("puck_opacity", 85)
-        set(value) = prefs.edit().putInt("puck_opacity", value.coerceIn(20, 100)).apply()
+        get() = prefs?.getInt("puck_opacity", 85) ?: 85
+        set(value) { prefs?.edit()?.putInt("puck_opacity", value.coerceIn(20, 100))?.apply() }
 
     var puckColor: Int
-        get() = prefs.getInt("puck_color", Color.parseColor("#795548")) // Android 17 Earth Brown default
-        set(value) = prefs.edit().putInt("puck_color", value).apply()
+        get() = prefs?.getInt("puck_color", Color.parseColor("#795548")) ?: Color.parseColor("#795548")
+        set(value) { prefs?.edit()?.putInt("puck_color", value)?.apply() }
 
     var smoothControl: Boolean
-        get() = prefs.getBoolean("smooth_control", true)
-        set(value) = prefs.edit().putBoolean("smooth_control", value).apply()
+        get() = prefs?.getBoolean("smooth_control", true) ?: true
+        set(value) { prefs?.edit()?.putBoolean("smooth_control", value)?.apply() }
 
     var iconStyle: String
-        get() = prefs.getString("icon_style", "orbit") ?: "orbit"
-        set(value) = prefs.edit().putString("icon_style", value).apply()
+        get() = prefs?.getString("icon_style", "orbit") ?: "orbit"
+        set(value) { prefs?.edit()?.putString("icon_style", value)?.apply() }
 
     var appTheme: String
-        get() = prefs.getString("app_theme", "system") ?: "system"
-        set(value) = prefs.edit().putString("app_theme", value).apply()
+        get() = prefs?.getString("app_theme", "system") ?: "system"
+        set(value) { prefs?.edit()?.putString("app_theme", value)?.apply() }
 
     var sensitivity: Int
-        get() = prefs.getInt("sensitivity", 60)
-        set(value) = prefs.edit().putInt("sensitivity", value.coerceIn(10, 100)).apply()
+        get() = prefs?.getInt("sensitivity", 60) ?: 60
+        set(value) { prefs?.edit()?.putInt("sensitivity", value.coerceIn(10, 100))?.apply() }
 
     var vibrationStrength: Int
-        get() = prefs.getInt("vibration_strength", 50)
-        set(value) = prefs.edit().putInt("vibration_strength", value.coerceIn(0, 100)).apply()
+        get() = prefs?.getInt("vibration_strength", 50) ?: 50
+        set(value) { prefs?.edit()?.putInt("vibration_strength", value.coerceIn(0, 100))?.apply() }
 
     var lastPuckX: Int
-        get() = prefs.getInt("last_x", -1)
-        set(value) = prefs.edit().putInt("last_x", value).apply()
+        get() = prefs?.getInt("last_x", -1) ?: -1
+        set(value) { prefs?.edit()?.putInt("last_x", value)?.apply() }
 
     var lastPuckY: Int
-        get() = prefs.getInt("last_y", -1)
-        set(value) = prefs.edit().putInt("last_y", value).apply()
+        get() = prefs?.getInt("last_y", -1) ?: -1
+        set(value) { prefs?.edit()?.putInt("last_y", value)?.apply() }
 
     var wasRightSide: Boolean
-        get() = prefs.getBoolean("was_right_side", true)
-        set(value) = prefs.edit().putBoolean("was_right_side", value).apply()
+        get() = prefs?.getBoolean("was_right_side", true) ?: true
+        set(value) { prefs?.edit()?.putBoolean("was_right_side", value)?.apply() }
 
     var menuOrder: List<String>
         get() {
-            val raw = prefs.getString("menu_order", null)
+            val raw = prefs?.getString("menu_order", null)
             if (raw.isNullOrBlank()) return DEFAULT_MENU_ORDER
             val items = raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }
             val merged = items.filter { DEFAULT_MENU_ORDER.contains(it) }.toMutableList()
@@ -304,7 +329,7 @@ class PuckPreferences(context: Context) {
         }
         set(value) {
             val valid = value.filter { DEFAULT_MENU_ORDER.contains(it) }
-            prefs.edit().putString("menu_order", valid.joinToString(",")).apply()
+            prefs?.edit()?.putString("menu_order", valid.joinToString(","))?.apply()
         }
 
     fun moveMenuItem(fromIndex: Int, toIndex: Int) {
@@ -321,12 +346,12 @@ class PuckPreferences(context: Context) {
     }
 
     var puckShape: String
-        get() = prefs.getString("puck_shape", "circle") ?: "circle"
-        set(value) = prefs.edit().putString("puck_shape", value).apply()
+        get() = prefs?.getString("puck_shape", "circle") ?: "circle"
+        set(value) { prefs?.edit()?.putString("puck_shape", value)?.apply() }
 
     var puckStyle: String
-        get() = prefs.getString("puck_style", "solid") ?: "solid"
-        set(value) = prefs.edit().putString("puck_style", value).apply()
+        get() = prefs?.getString("puck_style", "solid") ?: "solid"
+        set(value) { prefs?.edit()?.putString("puck_style", value)?.apply() }
 
     companion object {
         const val KEY_LATCH_LOCK_SCREEN = "perm_latch_lock_screen_v3"

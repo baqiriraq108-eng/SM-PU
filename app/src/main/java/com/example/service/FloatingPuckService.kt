@@ -62,6 +62,10 @@ class FloatingPuckService : Service() {
     companion object {
         const val ACTION_LOCK_SCREEN = "com.example.smartpuck.ACTION_LOCK_SCREEN"
         const val ACTION_CIRCLE_TO_SEARCH = "com.example.smartpuck.ACTION_CIRCLE_TO_SEARCH"
+
+        @Volatile
+        var isServiceRunning: Boolean = false
+            private set
     }
 
     private lateinit var windowManager: WindowManager
@@ -166,6 +170,7 @@ class FloatingPuckService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        isServiceRunning = true
         prefs = PuckPreferences(this)
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
@@ -230,6 +235,7 @@ class FloatingPuckService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        isServiceRunning = false
         super.onDestroy()
         val sp = getSharedPreferences("smart_puck_prefs", Context.MODE_PRIVATE)
         sp.unregisterOnSharedPreferenceChangeListener(prefChangeListener)
@@ -1159,7 +1165,9 @@ class FloatingPuckService : Service() {
     }
 
     private fun lockScreen() {
-        if (!PuckPermissionManager.isLockScreenGranted(this)) {
+        val canAttemptLock = PuckPermissionManager.isLockScreenGranted(this) ||
+            PuckPermissionManager.isLockScreenZombieState(this)
+        if (!canAttemptLock) {
             showHUD("⚠️ Enable Accessibility in Settings")
             Toast.makeText(
                 this,
@@ -1176,7 +1184,9 @@ class FloatingPuckService : Service() {
     }
 
     private fun takeInstantScreenshot() {
-        if (!PuckPermissionManager.isScreenshotGranted(this)) {
+        val canAttemptScreenshot = PuckPermissionManager.isScreenshotGranted(this) ||
+            PuckPermissionManager.isScreenshotZombieState(this)
+        if (!canAttemptScreenshot) {
             showHUD("⚠️ Enable Accessibility in Settings")
             Toast.makeText(
                 this,
@@ -1186,7 +1196,7 @@ class FloatingPuckService : Service() {
             return
         }
 
-        // 1. Instantly hide puck before capturing
+        // 1. Instantly hide puck before capturing (150ms clean frame delay)
         if (::puckContainer.isInitialized) {
             puckContainer.visibility = View.GONE
         }
@@ -1218,7 +1228,9 @@ class FloatingPuckService : Service() {
         hidePuckMenu()
         dismissHudFast()
 
-        if (!PuckPermissionManager.isCircleToSearchGranted(this)) {
+        val canAttemptCts = PuckPermissionManager.isCircleToSearchGranted(this) ||
+            PuckPermissionManager.isCircleToSearchZombieState(this)
+        if (!canAttemptCts) {
             Toast.makeText(
                 this,
                 "Enable 'Smart Puck Accessibility Lock' in Accessibility settings for Circle to Search",

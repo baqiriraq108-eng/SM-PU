@@ -21,50 +21,56 @@ object PuckKeepAliveManager {
      * Checks if service should be running according to preferences, and starts it if needed.
      */
     fun startPuckService(context: Context) {
-        val prefs = PuckPreferences(context)
+        if (!PuckPermissionManager.isUserUnlocked(context)) return
+        val appContext = context.applicationContext ?: context
+        val prefs = PuckPreferences(appContext)
         prefs.isServiceEnabled = true
 
-        val intent = Intent(context, FloatingPuckService::class.java)
+        val intent = Intent(appContext, FloatingPuckService::class.java)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
+                appContext.startForegroundService(intent)
             } else {
-                context.startService(intent)
+                appContext.startService(intent)
             }
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
 
-        scheduleKeepAliveWatchdog(context)
+        scheduleKeepAliveWatchdog(appContext)
     }
 
     /**
      * Stops the floating puck service and cancels watchdog alarms.
      */
     fun stopPuckService(context: Context) {
-        val prefs = PuckPreferences(context)
+        if (!PuckPermissionManager.isUserUnlocked(context)) return
+        val appContext = context.applicationContext ?: context
+        val prefs = PuckPreferences(appContext)
         prefs.isServiceEnabled = false
 
         try {
-            context.stopService(Intent(context, FloatingPuckService::class.java))
-        } catch (_: Exception) {}
+            appContext.stopService(Intent(appContext, FloatingPuckService::class.java))
+        } catch (_: Throwable) {}
 
-        cancelKeepAliveWatchdog(context)
+        cancelKeepAliveWatchdog(appContext)
     }
 
     /**
      * Ensures the FloatingPuckService is alive if enabled in user preferences.
      */
     fun ensureServiceAlive(context: Context) {
-        val prefs = PuckPreferences(context)
-        if (prefs.isServiceEnabled) {
-            val intent = Intent(context, FloatingPuckService::class.java)
-            try {
+        if (!PuckPermissionManager.isUserUnlocked(context)) return
+        val appContext = context.applicationContext ?: context
+        try {
+            val prefs = PuckPreferences(appContext)
+            if (prefs.isServiceEnabled) {
+                val intent = Intent(appContext, FloatingPuckService::class.java)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(intent)
+                    appContext.startForegroundService(intent)
                 } else {
-                    context.startService(intent)
+                    appContext.startService(intent)
                 }
-            } catch (_: Exception) {}
-        }
+            }
+        } catch (_: Throwable) {}
     }
 
     /**
@@ -97,7 +103,7 @@ object PuckKeepAliveManager {
                     pendingIntent
                 )
             }
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
     }
 
     /**
@@ -113,8 +119,10 @@ object PuckKeepAliveManager {
             PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
         )
         if (pendingIntent != null) {
-            alarmManager.cancel(pendingIntent)
-            pendingIntent.cancel()
+            try {
+                alarmManager.cancel(pendingIntent)
+                pendingIntent.cancel()
+            } catch (_: Throwable) {}
         }
     }
 
@@ -129,7 +137,7 @@ object PuckKeepAliveManager {
             } else {
                 true
             }
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             false
         }
     }
@@ -138,8 +146,9 @@ object PuckKeepAliveManager {
      * Requests battery optimization exemption so the app never sleeps in the background.
      */
     fun requestIgnoreBatteryOptimizations(context: Context) {
-        val prefs = PuckPreferences(context)
-        prefs.isBatteryOptPermanentlyGranted = true
+        if (PuckPermissionManager.isUserUnlocked(context)) {
+            PuckPreferences(context).isBatteryOptPermanentlyGranted = true
+        }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 val intent = Intent(
@@ -148,7 +157,7 @@ object PuckKeepAliveManager {
                 ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
                 context.startActivity(intent)
             }
-        } catch (_: Exception) {
+        } catch (_: Throwable) {
             openAppBatterySettings(context)
         }
     }
@@ -157,23 +166,25 @@ object PuckKeepAliveManager {
      * Opens App Details or Battery settings for OEM optimization adjustments.
      */
     fun openAppBatterySettings(context: Context) {
-        val prefs = PuckPreferences(context)
-        prefs.isBatteryOptPermanentlyGranted = true
+        if (PuckPermissionManager.isUserUnlocked(context)) {
+            PuckPreferences(context).isBatteryOptPermanentlyGranted = true
+        }
         try {
             val intent = Intent(
                 Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.parse("package:${context.packageName}")
             ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
             context.startActivity(intent)
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
     }
 
     /**
      * Opens OEM AutoStart / Background settings on popular devices (Xiaomi, Huawei, Oppo, Vivo, etc.).
      */
     fun openAutoStartSettings(context: Context) {
-        val prefs = PuckPreferences(context)
-        prefs.isBatteryOptPermanentlyGranted = true
+        if (PuckPermissionManager.isUserUnlocked(context)) {
+            PuckPreferences(context).isBatteryOptPermanentlyGranted = true
+        }
         val intents = listOf(
             // Xiaomi / MIUI / HyperOS
             Intent().setComponent(
@@ -202,7 +213,7 @@ object PuckKeepAliveManager {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(intent)
                 return
-            } catch (_: Exception) {}
+            } catch (_: Throwable) {}
         }
 
         // Fallback to application settings

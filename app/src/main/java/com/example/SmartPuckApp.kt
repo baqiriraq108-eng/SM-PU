@@ -15,8 +15,14 @@ class SmartPuckApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        createNotificationChannel()
-        com.example.util.DndSyncManager.init(this)
+        try {
+            createNotificationChannel()
+        } catch (_: Throwable) {}
+        try {
+            if (com.example.util.PuckPermissionManager.isUserUnlocked(this)) {
+                com.example.util.DndSyncManager.init(this)
+            }
+        } catch (_: Throwable) {}
     }
 
     private fun createNotificationChannel() {

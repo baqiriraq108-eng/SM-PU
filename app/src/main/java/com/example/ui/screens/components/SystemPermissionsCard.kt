@@ -29,6 +29,7 @@ fun SystemPermissionsCard(
     hasScreenshotPermission: Boolean = hasLockPermission,
     hasCtsPermission: Boolean = hasLockPermission,
     isAccessibilityActive: Boolean,
+    isAccessibilityEnabledInOs: Boolean = isAccessibilityActive,
     isDeviceAdminActive: Boolean,
     hasDndPermission: Boolean,
     onRequestOverlay: () -> Unit,
@@ -43,9 +44,10 @@ fun SystemPermissionsCard(
     modifier: Modifier = Modifier
 ) {
     var autoStart by remember { mutableStateOf(prefs.autoStart) }
-    val isLockGranted = hasLockPermission || prefs.isLockPermissionLatched
-    val isScreenshotGranted = hasScreenshotPermission || isAccessibilityActive || prefs.isScreenshotPermissionLatched
-    val isCtsGranted = hasCtsPermission || isAccessibilityActive || prefs.isCtsPermissionLatched
+    val isLockGranted = isAccessibilityActive || isDeviceAdminActive || hasLockPermission
+    val isScreenshotGranted = isAccessibilityActive && hasScreenshotPermission
+    val isCtsGranted = isAccessibilityActive && hasCtsPermission
+    val isAccessibilityZombie = !isAccessibilityActive && isAccessibilityEnabledInOs
 
     Card(
         modifier = modifier
@@ -118,6 +120,7 @@ fun SystemPermissionsCard(
                     // Row 3: Lock Screen Engine (Accessibility or Device Admin)
                     LockPermissionRow(
                         isAccessibilityActive = isAccessibilityActive,
+                        isAccessibilityZombie = isAccessibilityZombie && !isDeviceAdminActive,
                         hasLockPermission = isLockGranted,
                         isDeviceAdminActive = isDeviceAdminActive,
                         onRequestAccessibility = onRequestAccessibility,
@@ -131,9 +134,13 @@ fun SystemPermissionsCard(
                     PermissionRow(
                         icon = Icons.Default.Screenshot,
                         title = "Instant Screenshot",
-                        subtitle = if (isScreenshotGranted) "Active" else "Accessibility capture",
+                        subtitle = when {
+                            isScreenshotGranted -> "Active"
+                            isAccessibilityZombie -> "Not working — Re-enable in Settings"
+                            else -> "Accessibility capture"
+                        },
                         isGranted = isScreenshotGranted,
-                        actionText = "Grant",
+                        actionText = if (isAccessibilityZombie) "Fix" else "Grant",
                         onAction = onRequestScreenshotAccessibility,
                         testTag = "btn_screenshot_permission"
                     )
@@ -144,9 +151,13 @@ fun SystemPermissionsCard(
                     PermissionRow(
                         icon = Icons.Default.TravelExplore,
                         title = "Circle to Search",
-                        subtitle = if (isCtsGranted) "Active" else "Accessibility gesture",
+                        subtitle = when {
+                            isCtsGranted -> "Active"
+                            isAccessibilityZombie -> "Not working — Re-enable in Settings"
+                            else -> "Accessibility gesture"
+                        },
                         isGranted = isCtsGranted,
-                        actionText = "Grant",
+                        actionText = if (isAccessibilityZombie) "Fix" else "Grant",
                         onAction = onRequestCtsAccessibility,
                         testTag = "btn_cts_permission"
                     )
@@ -331,6 +342,7 @@ private fun PermissionRow(
 @Composable
 private fun LockPermissionRow(
     isAccessibilityActive: Boolean,
+    isAccessibilityZombie: Boolean = false,
     hasLockPermission: Boolean,
     isDeviceAdminActive: Boolean,
     onRequestAccessibility: () -> Unit,
@@ -373,16 +385,21 @@ private fun LockPermissionRow(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Lock & Screenshot",
+                        text = "Lock Screen",
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                         maxLines = 1,
                         softWrap = false,
                         modifier = Modifier.basicMarquee()
                     )
                     Text(
-                        text = if (isAnyActive) "Active" else "Accessibility required",
+                        text = when {
+                            isAccessibilityActive -> "Active"
+                            isDeviceAdminActive -> "Active • Device Admin"
+                            isAccessibilityZombie -> "Not working — Re-enable in Settings"
+                            else -> "Accessibility required"
+                        },
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (isAccessibilityZombie) Color(0xFFD97706) else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         softWrap = false,
                         modifier = Modifier.basicMarquee()
@@ -397,7 +414,7 @@ private fun LockPermissionRow(
             }
         }
 
-        // Only show permission request buttons if neither accessibility nor lock permission is granted
+        // Show permission request / repair buttons if neither accessibility binder nor Device Admin is active
         if (!isAnyActive) {
             Spacer(modifier = Modifier.height(6.dp))
             Row(
@@ -409,7 +426,13 @@ private fun LockPermissionRow(
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                     modifier = Modifier.weight(1f).height(30.dp).testTag("btn_accessibility_lock")
                 ) {
-                    Text("Accessibility", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
+                    Text(
+                        if (isAccessibilityZombie) "Fix Accessibility" else "Accessibility",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
 
                 if (!isDeviceAdminActive) {

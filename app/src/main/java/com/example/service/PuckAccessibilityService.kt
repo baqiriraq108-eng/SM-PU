@@ -4,16 +4,24 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Path
+import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.util.DisplayMetrics
+import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import com.example.data.PuckPreferences
 import com.example.util.PuckKeepAliveManager
 import com.example.util.PuckPermissionManager
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -27,6 +35,8 @@ class PuckAccessibilityService : AccessibilityService() {
         var timeoutRunnable: Runnable? = null
     }
 
+    private var overlayAnchorView: View? = null
+
     companion object {
         @Volatile
         var instance: PuckAccessibilityService? = null
@@ -35,6 +45,9 @@ class PuckAccessibilityService : AccessibilityService() {
         @Volatile
         var isSystemBound: Boolean = false
             private set
+
+        private val _isBoundState = MutableStateFlow(false)
+        val isBoundState: StateFlow<Boolean> = _isBoundState.asStateFlow()
 
         private val mainHandler = Handler(Looper.getMainLooper())
         private val connectionWaiters = CopyOnWriteArrayList<ConnectionWaiter>()
@@ -86,7 +99,9 @@ class PuckAccessibilityService : AccessibilityService() {
                     waiter.timeoutRunnable?.let { mainHandler.removeCallbacks(it) }
                     connectionWaiters.remove(waiter)
                     mainHandler.post {
-                        waiter.onConnected(service)
+                        try {
+                            waiter.onConnected(service)
+                        } catch (_: Throwable) {}
                     }
                 }
             }
@@ -97,7 +112,7 @@ class PuckAccessibilityService : AccessibilityService() {
             if (service != null && isSystemBound && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 return try {
                     service.performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN)
-                } catch (_: Exception) {
+                } catch (_: Throwable) {
                     false
                 }
             }
@@ -109,7 +124,7 @@ class PuckAccessibilityService : AccessibilityService() {
             if (service != null && isSystemBound && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 return try {
                     service.performGlobalAction(GLOBAL_ACTION_TAKE_SCREENSHOT)
-                } catch (_: Exception) {
+                } catch (_: Throwable) {
                     false
                 }
             }
@@ -145,7 +160,7 @@ class PuckAccessibilityService : AccessibilityService() {
                 // 0 = 3-button navigation
                 val navMode = try {
                     Settings.Secure.getInt(service.contentResolver, "navigation_mode", 2)
-                } catch (_: Exception) {
+                } catch (_: Throwable) {
                     2
                 }
 
@@ -166,7 +181,7 @@ class PuckAccessibilityService : AccessibilityService() {
                     .addStroke(stroke)
                     .build()
 
-                val dispatched = service.dispatchGesture(
+                service.dispatchGesture(
                     gesture,
                     object : GestureResultCallback() {
                         override fun onCompleted(gestureDescription: GestureDescription?) {
@@ -194,52 +209,134 @@ class PuckAccessibilityService : AccessibilityService() {
                     },
                     mainHandler
                 )
-                dispatched
-            } catch (_: Exception) {
+            } catch (_: Throwable) {
                 false
             }
         }
     }
 
     override fun onCreate() {
-        super.onCreate()
-        instance = this
+        try {
+            super.onCreate()
+            instance = this
+        } catch (_: Throwable) {}
     }
 
     override fun onServiceConnected() {
-        super.onServiceConnected()
-        instance = this
-        isSystemBound = true
-        // Synchronously commit all 3 feature permission latches (Lock Screen, Screenshot, Circle to Search)
-        PuckPermissionManager.onAccessibilityServiceConnected(applicationContext)
-        // Ensure FloatingPuckService maintains foreground process priority for the shared app process
-        PuckKeepAliveManager.ensureServiceAlive(applicationContext)
-        // Flush any in-process action callbacks waiting on binder connection
-        flushConnectionWaiters(this)
+        try {
+            super.onServiceConnected()
+            instance = this
+            isSystemBound = true
+            _isBoundState.value = true
+
+            // 1. Anchor AccessibilityService alive on Xiaomi HyperOS with a 1x1 TYPE_ACCESSIBILITY_OVERLAY
+            // so system_server and HyperOS battery cleaner maintain visual-accessibility priority.
+            attachAccessibilityOverlayAnchor()
+
+            // 2. Guarded post-boot & post-unlock FloatingPuckService startup driven safely from
+            // system-bound AccessibilityService context (exempt from Android 15/16 FGS boot blocks).
+            val appCtx = applicationContext ?: this
+            if (PuckPermissionManager.isUserUnlocked(appCtx)) {
+                val prefs = PuckPreferences(appCtx)
+                if (prefs.isServiceEnabled && !FloatingPuckService.isServiceRunning) {
+                    PuckKeepAliveManager.ensureServiceAlive(appCtx)
+                }
+            }
+
+            // 3. Flush any pending in-process action callbacks
+            flushConnectionWaiters(this)
+        } catch (_: Throwable) {
+            // Zero-crash guard: never throw inside onServiceConnected() or OS marks service "Not working"
+        }
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        instance = this
-        // Keep the shared process alive via FloatingPuckService without calling startForeground() on AccessibilityService
-        PuckKeepAliveManager.ensureServiceAlive(applicationContext)
+        try {
+            super.onTaskRemoved(rootIntent)
+            instance = this
+            val appCtx = applicationContext ?: this
+            if (PuckPermissionManager.isUserUnlocked(appCtx)) {
+                PuckKeepAliveManager.ensureServiceAlive(appCtx)
+            }
+        } catch (_: Throwable) {}
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
-        isSystemBound = false
-        instance = null
-        return super.onUnbind(intent)
+        return try {
+            detachAccessibilityOverlayAnchor()
+            isSystemBound = false
+            _isBoundState.value = false
+            instance = null
+            super.onUnbind(intent)
+        } catch (_: Throwable) {
+            isSystemBound = false
+            _isBoundState.value = false
+            instance = null
+            false
+        }
     }
 
     override fun onDestroy() {
-        isSystemBound = false
-        instance = null
-        super.onDestroy()
+        try {
+            detachAccessibilityOverlayAnchor()
+            isSystemBound = false
+            _isBoundState.value = false
+            instance = null
+            super.onDestroy()
+        } catch (_: Throwable) {
+            isSystemBound = false
+            _isBoundState.value = false
+            instance = null
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // No event interception required for global action and gesture dispatch
+        try {
+            // No event interception required for global action and gesture dispatch
+        } catch (_: Throwable) {}
     }
 
-    override fun onInterrupt() {}
+    override fun onInterrupt() {
+        try {
+            // Intentionally no-op with zero-crash protection
+        } catch (_: Throwable) {}
+    }
+
+    private fun attachAccessibilityOverlayAnchor() {
+        try {
+            if (overlayAnchorView != null) return
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return
+
+            val wm = getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: return
+            val anchor = View(this).apply {
+                setBackgroundColor(Color.TRANSPARENT)
+            }
+            val anchorParams = WindowManager.LayoutParams(
+                1,
+                1,
+                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                x = 0
+                y = 0
+            }
+            wm.addView(anchor, anchorParams)
+            overlayAnchorView = anchor
+        } catch (_: Throwable) {}
+    }
+
+    private fun detachAccessibilityOverlayAnchor() {
+        try {
+            val anchor = overlayAnchorView ?: return
+            overlayAnchorView = null
+            val wm = getSystemService(Context.WINDOW_SERVICE) as? WindowManager
+            wm?.removeView(anchor)
+        } catch (_: Throwable) {
+            overlayAnchorView = null
+        }
+    }
 }
