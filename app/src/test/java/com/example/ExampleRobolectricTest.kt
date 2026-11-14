@@ -75,4 +75,25 @@ class ExampleRobolectricTest {
     prefs.ctsCustomHoldDurationMs = 2000
     assertEquals(com.example.data.PuckPreferences.MAX_CTS_HOLD_MS, prefs.ctsCustomHoldDurationMs)
   }
+
+  @Test
+  fun `verify accessibility permission remains active across task swipe when enabled in OS Settings`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val componentString = "${context.packageName}/${com.example.service.PuckAccessibilityService::class.java.name}"
+
+    android.provider.Settings.Secure.putString(
+      context.contentResolver,
+      android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+      componentString
+    )
+
+    // Even when PuckAccessibilityService.instance is null (e.g., right after task swipe),
+    // LockScreenHelper must recognize the service as enabled in the OS and never fail.
+    assertEquals(true, com.example.util.LockScreenHelper.isAccessibilityServiceEnabled(context))
+    assertEquals(true, com.example.util.LockScreenHelper.isAccessibilityServiceActive(context))
+    assertEquals(true, com.example.util.LockScreenHelper.isLockPermissionGranted(context))
+    assertEquals(true, com.example.util.LockScreenHelper.performLock(context))
+    assertEquals(true, com.example.util.LockScreenHelper.performScreenshot(context))
+    assertEquals(true, com.example.util.CircleToSearchHelper.performCircleToSearch(context, 850L))
+  }
 }

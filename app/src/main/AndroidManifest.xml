@@ -42,6 +42,8 @@
             android:name=".service.FloatingPuckService"
             android:enabled="true"
             android:exported="false"
+            android:stopWithTask="false"
+            android:directBootAware="true"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
@@ -91,7 +93,11 @@
             android:label="Smart Puck Accessibility Lock"
             android:stopWithTask="false"
             android:directBootAware="true"
+            android:foregroundServiceType="specialUse"
             android:exported="true">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="System accessibility actions for screen lock, screenshot, and Circle to Search gesture dispatch" />
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>

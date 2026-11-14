@@ -15,41 +15,75 @@ import com.example.service.PuckDeviceAdminReceiver
 object LockScreenHelper {
 
     /**
-     * Queries Android OS directly to determine if an Accessibility Service is enabled
-     * in system settings, surviving process restarts and reboots.
+     * Authoritatively queries Android OS and active binder state to determine if
+     * [PuckAccessibilityService] is enabled in system settings, surviving process restarts,
+     * task swipes from Recent Apps, and reboots.
      */
-    fun isAccessibilityServiceEnabled(context: Context, serviceClass: Class<*> = PuckAccessibilityService::class.java): Boolean {
+    fun isAccessibilityServiceEnabled(
+        context: Context,
+        serviceClass: Class<*> = PuckAccessibilityService::class.java
+    ): Boolean {
+        // 1. Fast path: if the system binder is currently active in memory, it is enabled
+        if (PuckAccessibilityService.isRunning()) {
+            return true
+        }
+
+        // 2. Authoritative OS Settings.Secure check
         try {
             val expectedComponent = ComponentName(context, serviceClass)
+            val expectedClassName = serviceClass.name
+            val expectedSimpleName = serviceClass.simpleName
+            val pkgName = context.packageName
+
             val enabledServices = Settings.Secure.getString(
                 context.contentResolver,
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            ) ?: return false
-
-            val colonSplitter = TextUtils.SimpleStringSplitter(':')
-            colonSplitter.setString(enabledServices)
-            while (colonSplitter.hasNext()) {
-                val componentNameString = colonSplitter.next()
-                val enabledComponent = ComponentName.unflattenFromString(componentNameString)
-                if (enabledComponent != null && (
-                    enabledComponent == expectedComponent ||
-                    componentNameString.contains("PuckAccessibilityService", ignoreCase = true)
-                )) {
-                    return true
+            )
+            if (!enabledServices.isNullOrBlank()) {
+                val colonSplitter = TextUtils.SimpleStringSplitter(':')
+                colonSplitter.setString(enabledServices)
+                while (colonSplitter.hasNext()) {
+                    val entry = colonSplitter.next().trim()
+                    val enabledComponent = ComponentName.unflattenFromString(entry)
+                    if (enabledComponent != null) {
+                        if (enabledComponent == expectedComponent) {
+                            return true
+                        }
+                        if (enabledComponent.packageName == pkgName &&
+                            (enabledComponent.className == expectedClassName ||
+                                enabledComponent.className.endsWith(expectedSimpleName, ignoreCase = true))
+                        ) {
+                            return true
+                        }
+                    }
+                    if (entry.contains(expectedSimpleName, ignoreCase = true) &&
+                        (entry.contains(pkgName, ignoreCase = true) || entry.contains("com.example", ignoreCase = true))
+                    ) {
+                        return true
+                    }
                 }
             }
         } catch (_: Exception) {}
 
-        // Fallback: AccessibilityManager check
+        // 3. Fallback: AccessibilityManager check across all feedback masks
         try {
             val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as? android.view.accessibility.AccessibilityManager
             if (am != null) {
-                val enabledList = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-                for (service in enabledList) {
-                    val id = service.id
-                    if (id.contains("PuckAccessibilityService", ignoreCase = true) ||
-                        id.contains(context.packageName, ignoreCase = true)) {
-                        return true
+                val masks = intArrayOf(
+                    AccessibilityServiceInfo.FEEDBACK_ALL_MASK,
+                    AccessibilityServiceInfo.FEEDBACK_GENERIC
+                )
+                for (mask in masks) {
+                    val enabledList = am.getEnabledAccessibilityServiceList(mask)
+                    for (service in enabledList) {
+                        val id = service.id ?: continue
+                        val resolvePkg = service.resolveInfo?.serviceInfo?.packageName
+                        if (resolvePkg == context.packageName ||
+                            id.contains("PuckAccessibilityService", ignoreCase = true) ||
+                            id.contains(context.packageName, ignoreCase = true)
+                        ) {
+                            return true
+                        }
                     }
                 }
             }
@@ -62,10 +96,10 @@ object LockScreenHelper {
      * Executes lock screen using the available method:
      * 1. AccessibilityService (Android 9+)
      * 2. DevicePolicyManager (Device Admin)
-     * If the service is enabled in settings but binding is in transition, handles gracefully.
+     * Never falsely reports failure if the Accessibility Service is enabled in OS settings.
      */
     fun performLock(context: Context): Boolean {
-        // Method 1: Accessibility Service (Preferred on Android 9+)
+        // Method 1: Immediate in-memory bound Accessibility Service execution
         try {
             if (PuckAccessibilityService.lockScreen()) {
                 return true
@@ -82,8 +116,10 @@ object LockScreenHelper {
             }
         } catch (_: Exception) {}
 
-        // If enabled in Settings.Secure but service instance is briefly reconnecting
+        // Method 3: If enabled in OS settings while the binder is reconnecting after a task swipe,
+        // queue the lock action to fire immediately upon connection and never prompt for permission.
         if (isAccessibilityServiceEnabled(context)) {
+            PuckAccessibilityService.enqueueOrPerformLock()
             return true
         }
 
@@ -92,6 +128,7 @@ object LockScreenHelper {
 
     /**
      * Executes instant system screenshot via Accessibility Service (Android 9+).
+     * If enabled in OS settings while binder is reconnecting, queues the screenshot seamlessly.
      */
     fun performScreenshot(context: Context): Boolean {
         try {
@@ -101,6 +138,7 @@ object LockScreenHelper {
         } catch (_: Exception) {}
 
         if (isAccessibilityServiceEnabled(context)) {
+            PuckAccessibilityService.enqueueOrPerformScreenshot()
             return true
         }
 
@@ -115,7 +153,7 @@ object LockScreenHelper {
     }
 
     /**
-     * Checks if PuckAccessibilityService is running in-memory or enabled in Android settings.
+     * Checks if PuckAccessibilityService is bound in-memory or enabled in Android OS settings.
      */
     fun isAccessibilityServiceActive(context: Context): Boolean {
         return PuckAccessibilityService.isRunning() || isAccessibilityServiceEnabled(context)

@@ -8,8 +8,9 @@ import com.example.service.PuckAccessibilityService
  * Pure Accessibility gesture launcher for Circle to Search on Android 16 and Xiaomi HyperOS 3 & 4.
  *
  * Exclusively dispatches a precision press-and-hold gesture on the bottom system navigation handle
- * via [PuckAccessibilityService.triggerCircleToSearch]. Never falls back to Voice Search or
- * Assistant intents so Google Voice Search ("Listening...") is never accidentally triggered.
+ * via [PuckAccessibilityService.triggerCircleToSearch].
+ * Checks authoritative OS settings via [LockScreenHelper.isAccessibilityServiceActive] so it never
+ * falsely asks the user to re-enable Accessibility permission after swiping the app from Recents.
  */
 object CircleToSearchHelper {
 
@@ -18,7 +19,8 @@ object CircleToSearchHelper {
         holdDurationMs: Long = 850L,
         onFinished: (() -> Unit)? = null
     ): Boolean {
-        if (!PuckAccessibilityService.isRunning()) {
+        // 1. Authoritative OS & binder check: only prompt if genuinely disabled in Android Settings
+        if (!LockScreenHelper.isAccessibilityServiceActive(context)) {
             onFinished?.invoke()
             Toast.makeText(
                 context,
@@ -28,7 +30,8 @@ object CircleToSearchHelper {
             return false
         }
 
-        val dispatched = PuckAccessibilityService.triggerCircleToSearch(holdDurationMs) {
+        // 2. Execute immediately if bound, or queue seamlessly if the OS is mid-rebind
+        val dispatched = PuckAccessibilityService.enqueueOrTriggerCircleToSearch(holdDurationMs) {
             onFinished?.invoke()
         }
 
