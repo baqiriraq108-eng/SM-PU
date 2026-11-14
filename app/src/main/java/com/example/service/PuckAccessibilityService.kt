@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Path
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.WindowManager
@@ -36,7 +38,7 @@ class PuckAccessibilityService : AccessibilityService() {
 
         /**
          * Triggers Circle to Search on Android 16 and Xiaomi HyperOS 3 & 4 by dispatching
-         * a precision press-and-hold gesture on the system navigation handle / home bar.
+         * a stationary press-and-hold gesture on the system navigation handle / home bar.
          * SystemUI and HyperOS launcher intercept this hold at the bottom center of the screen
          * to launch the native Circle to Search overlay with live screen capture context.
          */
@@ -66,20 +68,18 @@ class PuckAccessibilityService : AccessibilityService() {
                     2
                 }
 
-                // Target the exact vertical coordinate of the system gesture pill or home button
-                val bottomOffsetDp = if (navMode == 0) 24f else 6f
+                // Target the exact vertical coordinate of the system gesture pill (9dp from bottom)
+                // or 3-button Home key (24dp from bottom)
+                val bottomOffsetDp = if (navMode == 0) 24f else 9f
                 val targetX = screenW / 2f
                 val targetY = (screenH - bottomOffsetDp * density).coerceIn(1f, screenH - 2f)
 
+                // Pure stationary point Path so SystemUI registers a clean long-press on the handle
+                // without interpreting any upward swipe movement.
                 val holdPath = Path().apply {
                     moveTo(targetX, targetY)
-                    // Micro-jitter (< 0.5px) ensures HyperOS 3/4 & Android 16 touch pipeline
-                    // registers an active finger hold on the navigation bar handle
-                    lineTo(targetX, (targetY - 0.3f).coerceAtLeast(1f))
                 }
 
-                // Configurable continuous press-and-hold duration (850ms default in Automatic mode,
-                // or 400ms..1500ms in Manual mode).
                 val clampedDuration = holdDurationMs.coerceIn(400L, 1500L)
                 val stroke = GestureDescription.StrokeDescription(holdPath, 0L, clampedDuration)
                 val gesture = GestureDescription.Builder()
@@ -99,7 +99,7 @@ class PuckAccessibilityService : AccessibilityService() {
                             onResult?.invoke(false)
                         }
                     },
-                    null
+                    Handler(Looper.getMainLooper())
                 )
             } catch (_: Exception) {
                 false

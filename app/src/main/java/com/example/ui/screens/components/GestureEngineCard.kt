@@ -225,121 +225,121 @@ fun GestureEngineCard(
                                     )
                                 }
                             }
+                        }
+                    }
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                            // 2. Bottom Bar Hold Duration Control (Title + Badge Only)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Bottom Bar Hold Duration",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = MaterialTheme.colorScheme.primaryContainer
-                                ) {
-                                    val holdBadgeText = if (ctsHoldMode == PuckPreferences.SPEED_MODE_MANUAL) {
-                                        "$ctsCustomHoldDurationMs ms"
+                    // 2. Bottom Bar Hold Duration Control (Always Visible, Title + Badge Only)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Bottom Bar Hold Duration",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            val holdBadgeText = if (ctsHoldMode == PuckPreferences.SPEED_MODE_MANUAL) {
+                                "$ctsCustomHoldDurationMs ms"
+                            } else {
+                                "Auto • $autoHoldDurationMs ms"
+                            }
+                            Text(
+                                text = holdBadgeText,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .testTag("badge_cts_hold_duration_ms"),
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("segmented_cts_hold_mode")
+                    ) {
+                        val holdModes = listOf(
+                            Triple(PuckPreferences.SPEED_MODE_AUTO, "Automatic", "btn_cts_hold_mode_auto"),
+                            Triple(PuckPreferences.SPEED_MODE_MANUAL, "Manual", "btn_cts_hold_mode_manual")
+                        )
+                        holdModes.forEach { (modeKey, modeLabel, tag) ->
+                            val isSelected = ctsHoldMode == modeKey
+                            Surface(
+                                onClick = {
+                                    prefs.ctsHoldMode = modeKey
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainer
+                                },
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isSelected) {
+                                        MaterialTheme.colorScheme.primary
                                     } else {
-                                        "Auto • $autoHoldDurationMs ms"
+                                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
                                     }
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(36.dp)
+                                    .testTag(tag)
+                            ) {
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier.fillMaxSize()
+                                ) {
                                     Text(
-                                        text = holdBadgeText,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                            .testTag("badge_cts_hold_duration_ms"),
+                                        text = modeLabel,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (isSelected) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface
+                                        },
                                         maxLines = 1,
                                         softWrap = false
                                     )
                                 }
                             }
+                        }
+                    }
 
-                            Spacer(modifier = Modifier.height(8.dp))
+                    AnimatedVisibility(
+                        visible = ctsHoldMode == PuckPreferences.SPEED_MODE_MANUAL,
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut()
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Spacer(modifier = Modifier.height(6.dp))
 
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("segmented_cts_hold_mode")
-                            ) {
-                                val holdModes = listOf(
-                                    Triple(PuckPreferences.SPEED_MODE_AUTO, "Automatic", "btn_cts_hold_mode_auto"),
-                                    Triple(PuckPreferences.SPEED_MODE_MANUAL, "Manual", "btn_cts_hold_mode_manual")
-                                )
-                                holdModes.forEach { (modeKey, modeLabel, tag) ->
-                                    val isSelected = ctsHoldMode == modeKey
-                                    Surface(
-                                        onClick = {
-                                            prefs.ctsHoldMode = modeKey
-                                        },
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (isSelected) {
-                                            MaterialTheme.colorScheme.primaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.surfaceContainer
-                                        },
-                                        border = BorderStroke(
-                                            1.dp,
-                                            if (isSelected) {
-                                                MaterialTheme.colorScheme.primary
-                                            } else {
-                                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
-                                            }
-                                        ),
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(36.dp)
-                                            .testTag(tag)
-                                    ) {
-                                        Box(
-                                            contentAlignment = Alignment.Center,
-                                            modifier = Modifier.fillMaxSize()
-                                        ) {
-                                            Text(
-                                                text = modeLabel,
-                                                fontSize = 12.sp,
-                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (isSelected) {
-                                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurface
-                                                },
-                                                maxLines = 1,
-                                                softWrap = false
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            AnimatedVisibility(
-                                visible = ctsHoldMode == PuckPreferences.SPEED_MODE_MANUAL,
-                                enter = expandVertically() + fadeIn(),
-                                exit = shrinkVertically() + fadeOut()
-                            ) {
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    Slider(
-                                        value = ctsCustomHoldDurationMs.toFloat(),
-                                        onValueChange = { newVal ->
-                                            prefs.ctsCustomHoldDurationMs = newVal.roundToInt()
-                                        },
-                                        valueRange = PuckPreferences.MIN_CTS_HOLD_MS.toFloat()..PuckPreferences.MAX_CTS_HOLD_MS.toFloat(),
-                                        modifier = Modifier.testTag("slider_cts_hold_duration_ms")
-                                    )
-                                }
-                            }
+                            Slider(
+                                value = ctsCustomHoldDurationMs.toFloat(),
+                                onValueChange = { newVal ->
+                                    prefs.ctsCustomHoldDurationMs = newVal.roundToInt()
+                                },
+                                valueRange = PuckPreferences.MIN_CTS_HOLD_MS.toFloat()..PuckPreferences.MAX_CTS_HOLD_MS.toFloat(),
+                                modifier = Modifier.testTag("slider_cts_hold_duration_ms")
+                            )
                         }
                     }
                 }

@@ -1203,28 +1203,41 @@ class FloatingPuckService : Service() {
 
         val holdDurationMs = prefs.getEffectiveCtsHoldDurationMs().toLong().coerceIn(400L, 1500L)
 
-        // 1. Hide floating puck immediately so Circle to Search captures a clean screen frame
+        // 1. Immediately hide floating puck and make its overlay window non-touchable so
+        // InputDispatcher completely releases overlay touch focus before dispatchGesture runs.
         if (::puckContainer.isInitialized) {
-            puckContainer.visibility = View.INVISIBLE
+            puckContainer.visibility = View.GONE
+        }
+        if (::params.isInitialized && ::puckView.isInitialized && puckView.isAttachedToWindow) {
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            try {
+                windowManager.updateViewLayout(puckView, params)
+            } catch (_: Exception) {}
         }
 
         val restorePuckRunnable = Runnable {
+            if (::params.isInitialized && ::puckView.isInitialized && puckView.isAttachedToWindow) {
+                params.flags = params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+                try {
+                    windowManager.updateViewLayout(puckView, params)
+                } catch (_: Exception) {}
+            }
             if (::puckContainer.isInitialized) {
                 puckContainer.visibility = View.VISIBLE
                 puckContainer.alpha = prefs.puckOpacity / 100f
             }
         }
 
-        // 2. Wait 90ms for surface compositor to flush clean frame, then dispatch Circle to Search
-        // and keep the puck hidden for the full hold duration plus a post-hold buffer.
+        // 2. Wait 160ms for WindowManager & SurfaceFlinger to finish tearing down the menu/puck
+        // touch state, then dispatch the bottom navigation bar press-and-hold gesture.
         handler.postDelayed({
             CircleToSearchHelper.performCircleToSearch(this, holdDurationMs) {
                 handler.removeCallbacks(restorePuckRunnable)
                 handler.postDelayed(restorePuckRunnable, 260L)
             }
             // Safety fallback to guarantee the puck stays hidden during the full hold + buffer, then restores
-            handler.postDelayed(restorePuckRunnable, holdDurationMs + 350L)
-        }, 90L)
+            handler.postDelayed(restorePuckRunnable, holdDurationMs + 400L)
+        }, 160L)
     }
 
     private fun vibrateDoubleTap() {
