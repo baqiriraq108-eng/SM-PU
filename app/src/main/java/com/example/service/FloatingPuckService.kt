@@ -46,19 +46,23 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.graphics.ColorUtils
+import android.os.SystemClock
 import com.example.MainActivity
 import com.example.R
 import com.example.SmartPuckApp
 import com.example.data.PuckPreferences
+import com.example.util.CircleToSearchHelper
 import com.example.util.DndSyncManager
 import com.example.util.LockScreenHelper
 import com.example.util.PuckKeepAliveManager
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 
 class FloatingPuckService : Service() {
 
     companion object {
         const val ACTION_LOCK_SCREEN = "com.example.smartpuck.ACTION_LOCK_SCREEN"
+        const val ACTION_CIRCLE_TO_SEARCH = "com.example.smartpuck.ACTION_CIRCLE_TO_SEARCH"
     }
 
     private lateinit var windowManager: WindowManager
@@ -115,6 +119,20 @@ class FloatingPuckService : Service() {
     private var isMenuShowing = false
     private var wasMenuOpenOnDown = false
     private var isPuckTouchedNow = false
+
+    // Double-Tap Circle to Search Gesture State Machine
+    private var waitingForSecondTap = false
+    private var isSecondTapCandidate = false
+    private var firstTapUpTimeMs = 0L
+    private var firstTapRawX = 0f
+    private var firstTapRawY = 0f
+    private val singleTapMenuRunnable = Runnable {
+        waitingForSecondTap = false
+        isSecondTapCandidate = false
+        if (!isDragging && !isControlling && !isPuckTouchedNow) {
+            showPuckMenu()
+        }
+    }
 
     private var cameraManager: CameraManager? = null
     private var mainCameraId: String? = null
@@ -199,6 +217,10 @@ class FloatingPuckService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_LOCK_SCREEN) {
             lockScreen()
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_CIRCLE_TO_SEARCH) {
+            triggerCircleToSearchFromPuck()
             return START_STICKY
         }
         startForegroundSafely()
@@ -366,6 +388,9 @@ class FloatingPuckService : Service() {
         val longPressHandler = Handler(Looper.getMainLooper())
         val longPressRunnable = Runnable {
             if (isFingerLifted) return@Runnable
+            handler.removeCallbacks(singleTapMenuRunnable)
+            waitingForSecondTap = false
+            isSecondTapCandidate = false
             longPressTriggered = true
             isControlling = true
             isDragging = false
@@ -385,6 +410,26 @@ class FloatingPuckService : Service() {
                     isFingerLifted = false
                     isHudLockedHidden = false
                     isPuckTouchedNow = true
+
+                    val nowMs = SystemClock.uptimeMillis()
+                    val doubleTapEnabled = prefs.doubleTapCtsEnabled
+                    val effectiveDelayMs = prefs.getEffectiveDoubleTapDelayMs()
+                    val tapSlopPx = dpToPx(36).toFloat()
+
+                    if (doubleTapEnabled &&
+                        waitingForSecondTap &&
+                        (nowMs - firstTapUpTimeMs) <= effectiveDelayMs &&
+                        hypot(event.rawX - firstTapRawX, event.rawY - firstTapRawY) <= tapSlopPx
+                    ) {
+                        handler.removeCallbacks(singleTapMenuRunnable)
+                        waitingForSecondTap = false
+                        isSecondTapCandidate = true
+                    } else {
+                        handler.removeCallbacks(singleTapMenuRunnable)
+                        waitingForSecondTap = false
+                        isSecondTapCandidate = false
+                    }
+
                     val menuOpenAtDown = isMenuShowing || (attachedMenuLayout != null)
                     wasMenuOpenOnDown = menuOpenAtDown
                     if (menuOpenAtDown) {
@@ -427,6 +472,9 @@ class FloatingPuckService : Service() {
                     if (!isControlling && (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4)) {
                         hidePuckMenu()
                         longPressHandler.removeCallbacks(longPressRunnable)
+                        handler.removeCallbacks(singleTapMenuRunnable)
+                        waitingForSecondTap = false
+                        isSecondTapCandidate = false
                         isDragging = true
                     }
 
@@ -456,10 +504,41 @@ class FloatingPuckService : Service() {
                     velocityTracker = null
 
                     if (!isDragging && !isControlling && !longPressTriggered) {
-                        if (!wasMenuOpenOnDown) {
-                            showPuckMenu()
+                        if (isSecondTapCandidate && prefs.doubleTapCtsEnabled) {
+                            isSecondTapCandidate = false
+                            waitingForSecondTap = false
+                            handler.removeCallbacks(singleTapMenuRunnable)
+                            triggerCircleToSearchFromPuck()
+                        } else if (!wasMenuOpenOnDown) {
+                            if (prefs.doubleTapCtsEnabled) {
+                                waitingForSecondTap = true
+                                isSecondTapCandidate = false
+                                firstTapUpTimeMs = SystemClock.uptimeMillis()
+                                firstTapRawX = event.rawX
+                                firstTapRawY = event.rawY
+                                handler.removeCallbacks(singleTapMenuRunnable)
+                                handler.postDelayed(
+                                    singleTapMenuRunnable,
+                                    prefs.getEffectiveDoubleTapDelayMs().toLong()
+                                )
+                            } else {
+                                showPuckMenu()
+                            }
+                        } else if (prefs.doubleTapCtsEnabled) {
+                            // Menu was open on first tap and closed on ACTION_DOWN;
+                            // still allow a second tap within the window to trigger Circle to Search
+                            waitingForSecondTap = true
+                            isSecondTapCandidate = false
+                            firstTapUpTimeMs = SystemClock.uptimeMillis()
+                            firstTapRawX = event.rawX
+                            firstTapRawY = event.rawY
                         }
+                    } else {
+                        isSecondTapCandidate = false
+                        waitingForSecondTap = false
+                        handler.removeCallbacks(singleTapMenuRunnable)
                     }
+
                     if (isDragging) {
                         snapToEdgeSmart(initialX, event.rawX - initialTouchX, velX)
                     }
@@ -480,6 +559,9 @@ class FloatingPuckService : Service() {
                     isHudLockedHidden = true
                     isPuckTouchedNow = false
                     wasMenuOpenOnDown = false
+                    isSecondTapCandidate = false
+                    waitingForSecondTap = false
+                    handler.removeCallbacks(singleTapMenuRunnable)
                     dismissHudFast()
                     longPressHandler.removeCallbacks(longPressRunnable)
                     velocityTracker?.recycle()
@@ -1114,6 +1196,52 @@ class FloatingPuckService : Service() {
         }, 150)
     }
 
+    private fun triggerCircleToSearchFromPuck() {
+        vibrateDoubleTap()
+        hidePuckMenu()
+        dismissHudFast()
+
+        val holdDurationMs = prefs.getEffectiveCtsHoldDurationMs().toLong().coerceIn(400L, 1500L)
+
+        // 1. Hide floating puck immediately so Circle to Search captures a clean screen frame
+        if (::puckContainer.isInitialized) {
+            puckContainer.visibility = View.INVISIBLE
+        }
+
+        val restorePuckRunnable = Runnable {
+            if (::puckContainer.isInitialized) {
+                puckContainer.visibility = View.VISIBLE
+                puckContainer.alpha = prefs.puckOpacity / 100f
+            }
+        }
+
+        // 2. Wait 90ms for surface compositor to flush clean frame, then dispatch Circle to Search
+        // and keep the puck hidden for the full hold duration plus a post-hold buffer.
+        handler.postDelayed({
+            CircleToSearchHelper.performCircleToSearch(this, holdDurationMs) {
+                handler.removeCallbacks(restorePuckRunnable)
+                handler.postDelayed(restorePuckRunnable, 260L)
+            }
+            // Safety fallback to guarantee the puck stays hidden during the full hold + buffer, then restores
+            handler.postDelayed(restorePuckRunnable, holdDurationMs + 350L)
+        }, 90L)
+    }
+
+    private fun vibrateDoubleTap() {
+        val strength = prefs.vibrationStrength
+        if (strength <= 0) return
+        val amp = strength.coerceIn(1, 255)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val timings = longArrayOf(0L, 14L, 38L, 18L)
+            val amplitudes = intArrayOf(0, amp, 0, amp)
+            try {
+                vibrator?.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+                return
+            } catch (_: Exception) {}
+        }
+        vibrate()
+    }
+
     private fun openMainSettings() {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1416,6 +1544,19 @@ class FloatingPuckService : Service() {
         }
 
         // --- ROW BUILDERS IN EXACT REQUESTED ORDER ---
+        // 0. Circle to Search — action button only
+        val rowCircleToSearch = createRowContainer().apply {
+            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_circle_search, isActive = true)
+            val text = createTextColumn("Circle to Search", "Instant screen search")
+            val action = createActionButton("Search") {
+                hidePuckMenu()
+                triggerCircleToSearchFromPuck()
+            }
+            addView(icon)
+            addView(text)
+            addView(action)
+        }
+
         // 1. Flashlight — toggle switch only
         val rowFlashlight = createRowContainer().apply {
             val icon = createLeadingContainer(false, emoji = "🔦", isActive = isFlashlightOn)
@@ -1586,6 +1727,7 @@ class FloatingPuckService : Service() {
             addView(action)
         }
 
+        rowCircleToSearch.tag = "circle_to_search"
         rowFlashlight.tag = "flashlight"
         rowScreenshot.tag = "screenshot"
         rowDnd.tag = "dnd"
@@ -1596,6 +1738,7 @@ class FloatingPuckService : Service() {
         rowLock.tag = "lock_screen"
 
         val rowsMap = mapOf(
+            "circle_to_search" to rowCircleToSearch,
             "flashlight" to rowFlashlight,
             "screenshot" to rowScreenshot,
             "dnd" to rowDnd,

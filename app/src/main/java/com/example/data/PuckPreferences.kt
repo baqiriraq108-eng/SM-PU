@@ -53,6 +53,21 @@ class PuckPreferences(context: Context) {
     private val _axisLockThresholdPxState = MutableStateFlow(axisLockThresholdPx)
     val axisLockThresholdPxState: StateFlow<Int> = _axisLockThresholdPxState.asStateFlow()
 
+    private val _doubleTapCtsEnabledState = MutableStateFlow(doubleTapCtsEnabled)
+    val doubleTapCtsEnabledState: StateFlow<Boolean> = _doubleTapCtsEnabledState.asStateFlow()
+
+    private val _doubleTapSpeedModeState = MutableStateFlow(doubleTapSpeedMode)
+    val doubleTapSpeedModeState: StateFlow<String> = _doubleTapSpeedModeState.asStateFlow()
+
+    private val _doubleTapCustomDelayMsState = MutableStateFlow(doubleTapCustomDelayMs)
+    val doubleTapCustomDelayMsState: StateFlow<Int> = _doubleTapCustomDelayMsState.asStateFlow()
+
+    private val _ctsHoldModeState = MutableStateFlow(ctsHoldMode)
+    val ctsHoldModeState: StateFlow<String> = _ctsHoldModeState.asStateFlow()
+
+    private val _ctsCustomHoldDurationMsState = MutableStateFlow(ctsCustomHoldDurationMs)
+    val ctsCustomHoldDurationMsState: StateFlow<Int> = _ctsCustomHoldDurationMsState.asStateFlow()
+
     private fun notifyState() {
         _isServiceEnabledState.value = isServiceEnabled
         _puckColorState.value = puckColor
@@ -65,6 +80,11 @@ class PuckPreferences(context: Context) {
         _puckStyleState.value = puckStyle
         _swapAxesState.value = swapAxes
         _axisLockThresholdPxState.value = axisLockThresholdPx
+        _doubleTapCtsEnabledState.value = doubleTapCtsEnabled
+        _doubleTapSpeedModeState.value = doubleTapSpeedMode
+        _doubleTapCustomDelayMsState.value = doubleTapCustomDelayMs
+        _ctsHoldModeState.value = ctsHoldMode
+        _ctsCustomHoldDurationMsState.value = ctsCustomHoldDurationMs
     }
 
     var isServiceEnabled: Boolean
@@ -94,6 +114,75 @@ class PuckPreferences(context: Context) {
     var axisLockThresholdPx: Int
         get() = prefs.getInt("axis_lock_threshold_px", 4)
         set(value) = prefs.edit().putInt("axis_lock_threshold_px", value.coerceIn(2, 16)).apply()
+
+    var doubleTapCtsEnabled: Boolean
+        get() = prefs.getBoolean("double_tap_cts_enabled", true)
+        set(value) = prefs.edit().putBoolean("double_tap_cts_enabled", value).apply()
+
+    var doubleTapSpeedMode: String
+        get() = prefs.getString("double_tap_speed_mode", SPEED_MODE_AUTO) ?: SPEED_MODE_AUTO
+        set(value) {
+            val normalized = if (value == SPEED_MODE_MANUAL) SPEED_MODE_MANUAL else SPEED_MODE_AUTO
+            prefs.edit().putString("double_tap_speed_mode", normalized).apply()
+        }
+
+    var doubleTapCustomDelayMs: Int
+        get() = prefs.getInt("double_tap_custom_delay_ms", DEFAULT_MANUAL_DOUBLE_TAP_MS)
+        set(value) = prefs.edit().putInt(
+            "double_tap_custom_delay_ms",
+            value.coerceIn(MIN_DOUBLE_TAP_MS, MAX_DOUBLE_TAP_MS)
+        ).apply()
+
+    var ctsHoldMode: String
+        get() = prefs.getString("cts_hold_mode", SPEED_MODE_AUTO) ?: SPEED_MODE_AUTO
+        set(value) {
+            val normalized = if (value == SPEED_MODE_MANUAL) SPEED_MODE_MANUAL else SPEED_MODE_AUTO
+            prefs.edit().putString("cts_hold_mode", normalized).apply()
+        }
+
+    var ctsCustomHoldDurationMs: Int
+        get() = prefs.getInt("cts_custom_hold_duration_ms", DEFAULT_AUTO_CTS_HOLD_MS)
+        set(value) = prefs.edit().putInt(
+            "cts_custom_hold_duration_ms",
+            value.coerceIn(MIN_CTS_HOLD_MS, MAX_CTS_HOLD_MS)
+        ).apply()
+
+    /**
+     * Resolves the active double-tap interval in milliseconds:
+     * - Automatic mode: adaptive system-tuned interval (255ms default on Android 16 / HyperOS 120Hz displays).
+     * - Manual mode: user-configured delay in [140ms..500ms].
+     */
+    fun getEffectiveDoubleTapDelayMs(): Int {
+        return if (doubleTapSpeedMode == SPEED_MODE_MANUAL) {
+            doubleTapCustomDelayMs.coerceIn(MIN_DOUBLE_TAP_MS, MAX_DOUBLE_TAP_MS)
+        } else {
+            getAutomaticDoubleTapDelayMs()
+        }
+    }
+
+    fun getAutomaticDoubleTapDelayMs(): Int {
+        val sysTimeout = try {
+            android.view.ViewConfiguration.getDoubleTapTimeout()
+        } catch (_: Exception) {
+            300
+        }
+        return (sysTimeout * 0.85f).toInt().coerceIn(220, 280)
+    }
+
+    /**
+     * Resolves the active bottom navigation bar press-and-hold duration in milliseconds:
+     * - Automatic mode: 850ms reliable hold threshold for Android 16 & Xiaomi HyperOS 3/4.
+     * - Manual mode: user-configured hold duration in [400ms..1500ms].
+     */
+    fun getEffectiveCtsHoldDurationMs(): Int {
+        return if (ctsHoldMode == SPEED_MODE_MANUAL) {
+            ctsCustomHoldDurationMs.coerceIn(MIN_CTS_HOLD_MS, MAX_CTS_HOLD_MS)
+        } else {
+            getAutomaticCtsHoldDurationMs()
+        }
+    }
+
+    fun getAutomaticCtsHoldDurationMs(): Int = DEFAULT_AUTO_CTS_HOLD_MS
 
     var horizontalBrightness: Boolean
         get() = prefs.getBoolean("horizontal_brightness", true)
@@ -183,7 +272,18 @@ class PuckPreferences(context: Context) {
         set(value) = prefs.edit().putString("puck_style", value).apply()
 
     companion object {
+        const val SPEED_MODE_AUTO = "auto"
+        const val SPEED_MODE_MANUAL = "manual"
+        const val MIN_DOUBLE_TAP_MS = 140
+        const val MAX_DOUBLE_TAP_MS = 500
+        const val DEFAULT_MANUAL_DOUBLE_TAP_MS = 280
+
+        const val MIN_CTS_HOLD_MS = 400
+        const val MAX_CTS_HOLD_MS = 1500
+        const val DEFAULT_AUTO_CTS_HOLD_MS = 850
+
         val DEFAULT_MENU_ORDER = listOf(
+            "circle_to_search",
             "flashlight",
             "screenshot",
             "dnd",

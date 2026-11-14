@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,6 +32,7 @@ data class ShortcutMeta(
 
 fun getShortcutMeta(key: String): ShortcutMeta {
     return when (key) {
+        "circle_to_search" -> ShortcutMeta("Circle to Search", "Visual AI", Icons.AutoMirrored.Filled.ManageSearch, Color(0xFF6366F1))
         "flashlight" -> ShortcutMeta("Flashlight", "Torch", Icons.Default.FlashlightOn, Color(0xFFF59E0B))
         "screenshot" -> ShortcutMeta("Screenshot", "Capture", Icons.Default.CameraAlt, Color(0xFF06B6D4))
         "dnd" -> ShortcutMeta("Do Not Disturb", "Silence", Icons.Default.DoNotDisturbOn, Color(0xFF8B5CF6))
