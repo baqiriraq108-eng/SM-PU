@@ -416,6 +416,13 @@ class FloatingPuckService : Service() {
                     isHudLockedHidden = false
                     isPuckTouchedNow = true
 
+                    // HyperOS Millet touch heartbeat & proactive accessibility watchdog on puck touch-down
+                    if (PuckAccessibilityService.isServiceAliveAndBound()) {
+                        PuckAccessibilityService.pulseAnchorView()
+                    } else {
+                        PuckPermissionManager.ensureAccessibilityServiceAlive(this@FloatingPuckService)
+                    }
+
                     val nowMs = SystemClock.uptimeMillis()
                     val doubleTapEnabled = prefs.doubleTapCtsEnabled
                     val effectiveDelayMs = prefs.getEffectiveDoubleTapDelayMs()
@@ -1166,7 +1173,8 @@ class FloatingPuckService : Service() {
 
     private fun lockScreen() {
         val canAttemptLock = PuckPermissionManager.isLockScreenGranted(this) ||
-            PuckPermissionManager.isLockScreenZombieState(this)
+            PuckPermissionManager.isLockScreenZombieState(this) ||
+            PuckPermissionManager.hasWriteSecureSettings(this)
         if (!canAttemptLock) {
             showHUD("⚠️ Enable Accessibility in Settings")
             Toast.makeText(
@@ -1185,7 +1193,8 @@ class FloatingPuckService : Service() {
 
     private fun takeInstantScreenshot() {
         val canAttemptScreenshot = PuckPermissionManager.isScreenshotGranted(this) ||
-            PuckPermissionManager.isScreenshotZombieState(this)
+            PuckPermissionManager.isScreenshotZombieState(this) ||
+            PuckPermissionManager.hasWriteSecureSettings(this)
         if (!canAttemptScreenshot) {
             showHUD("⚠️ Enable Accessibility in Settings")
             Toast.makeText(
@@ -1229,7 +1238,8 @@ class FloatingPuckService : Service() {
         dismissHudFast()
 
         val canAttemptCts = PuckPermissionManager.isCircleToSearchGranted(this) ||
-            PuckPermissionManager.isCircleToSearchZombieState(this)
+            PuckPermissionManager.isCircleToSearchZombieState(this) ||
+            PuckPermissionManager.hasWriteSecureSettings(this)
         if (!canAttemptCts) {
             Toast.makeText(
                 this,
@@ -2086,6 +2096,7 @@ class FloatingPuckService : Service() {
     private fun registerReceivers() {
         val filter = IntentFilter()
         filter.addAction(Intent.ACTION_CONFIGURATION_CHANGED)
+        filter.addAction(Intent.ACTION_USER_PRESENT)
         registerReceiver(configReceiver, filter)
 
         val volFilter = IntentFilter().apply {
@@ -2201,6 +2212,12 @@ class FloatingPuckService : Service() {
 
     private val configReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == Intent.ACTION_USER_PRESENT) {
+                if (!PuckAccessibilityService.isServiceAliveAndBound()) {
+                    PuckPermissionManager.ensureAccessibilityServiceAlive(this@FloatingPuckService)
+                }
+                return
+            }
             if (intent?.action == Intent.ACTION_CONFIGURATION_CHANGED) {
                 updateScreenDimensions()
                 if (::params.isInitialized && ::puckView.isInitialized && puckView.isAttachedToWindow) {

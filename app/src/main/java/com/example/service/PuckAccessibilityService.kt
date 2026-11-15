@@ -2,8 +2,11 @@ package com.example.service
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.app.Notification
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.PixelFormat
@@ -16,6 +19,9 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
+import androidx.core.app.NotificationCompat
+import com.example.MainActivity
+import com.example.SmartPuckApp
 import com.example.data.PuckPreferences
 import com.example.util.PuckKeepAliveManager
 import com.example.util.PuckPermissionManager
@@ -38,6 +44,8 @@ class PuckAccessibilityService : AccessibilityService() {
     private var overlayAnchorView: View? = null
 
     companion object {
+        const val ACCESSIBILITY_FOREGROUND_NOTIFICATION_ID = 2
+
         @Volatile
         var instance: PuckAccessibilityService? = null
             private set
@@ -61,12 +69,22 @@ class PuckAccessibilityService : AccessibilityService() {
         fun isRunning(): Boolean = isServiceAliveAndBound()
 
         /**
+         * Touch-driven heartbeat that invalidates the 1x1px [TYPE_ACCESSIBILITY_OVERLAY] anchor view
+         * whenever the floating puck is touched, preventing Xiaomi HyperOS Millet from classifying
+         * the accessibility window token as idle/frozen.
+         */
+        fun pulseAnchorView() {
+            try {
+                instance?.overlayAnchorView?.postInvalidate()
+            } catch (_: Throwable) {}
+        }
+
+        /**
          * Registers an in-process callback that executes immediately if [isServiceAliveAndBound]
-         * is already true, or waits up to [timeoutMs] (default 2500ms) for [onServiceConnected]
-         * to fire without calling startService() on the AccessibilityService.
+         * is already true, or waits up to [timeoutMs] for [onServiceConnected] to fire.
          */
         fun awaitBinderAndExecute(
-            timeoutMs: Long = 2500L,
+            timeoutMs: Long = 350L,
             onConnected: (PuckAccessibilityService) -> Unit,
             onTimeout: () -> Unit
         ) {
@@ -155,22 +173,16 @@ class PuckAccessibilityService : AccessibilityService() {
                 val screenW = realMetrics.widthPixels.toFloat().coerceAtLeast(360f)
                 val screenH = realMetrics.heightPixels.toFloat().coerceAtLeast(640f)
 
-                // Detect navigation mode:
-                // 2 = Gesture navigation (default on Android 16 & Xiaomi HyperOS 3/4)
-                // 0 = 3-button navigation
                 val navMode = try {
                     Settings.Secure.getInt(service.contentResolver, "navigation_mode", 2)
                 } catch (_: Throwable) {
                     2
                 }
 
-                // Target the exact vertical coordinate of the system gesture pill (9dp from bottom)
-                // or 3-button Home key (24dp from bottom)
                 val bottomOffsetDp = if (navMode == 0) 24f else 9f
                 val targetX = screenW / 2f
                 val targetY = (screenH - bottomOffsetDp * density).coerceIn(1f, screenH - 2f)
 
-                // Pure stationary point Path so SystemUI registers a clean long-press on the handle
                 val holdPath = Path().apply {
                     moveTo(targetX, targetY)
                 }
@@ -228,13 +240,18 @@ class PuckAccessibilityService : AccessibilityService() {
             instance = this
             isSystemBound = true
             _isBoundState.value = true
+            PuckPermissionManager.resetSelfHealDebounce()
 
-            // 1. Anchor AccessibilityService alive on Xiaomi HyperOS with a 1x1 TYPE_ACCESSIBILITY_OVERLAY
-            // so system_server and HyperOS battery cleaner maintain visual-accessibility priority.
+            // 1. Promote PuckAccessibilityService to Foreground priority (Notification ID = 2 on shared silent channel)
+            startForegroundSafely()
+
+            // 2. Attach 1x1px transparent TYPE_ACCESSIBILITY_OVERLAY hardware anchor
             attachAccessibilityOverlayAnchor()
 
-            // 2. Guarded post-boot & post-unlock FloatingPuckService startup driven safely from
-            // system-bound AccessibilityService context (exempt from Android 15/16 FGS boot blocks).
+            // 3. Flush any pending action callbacks immediately
+            flushConnectionWaiters(this)
+
+            // 4. Safely ensure FloatingPuckService is running post-boot / post-unlock
             val appCtx = applicationContext ?: this
             if (PuckPermissionManager.isUserUnlocked(appCtx)) {
                 val prefs = PuckPreferences(appCtx)
@@ -242,11 +259,8 @@ class PuckAccessibilityService : AccessibilityService() {
                     PuckKeepAliveManager.ensureServiceAlive(appCtx)
                 }
             }
-
-            // 3. Flush any pending in-process action callbacks
-            flushConnectionWaiters(this)
         } catch (_: Throwable) {
-            // Zero-crash guard: never throw inside onServiceConnected() or OS marks service "Not working"
+            // Zero-crash guard so OS never marks service "Not working"
         }
     }
 
@@ -254,6 +268,10 @@ class PuckAccessibilityService : AccessibilityService() {
         try {
             super.onTaskRemoved(rootIntent)
             instance = this
+            if (isSystemBound) {
+                startForegroundSafely()
+                attachAccessibilityOverlayAnchor()
+            }
             val appCtx = applicationContext ?: this
             if (PuckPermissionManager.isUserUnlocked(appCtx)) {
                 PuckKeepAliveManager.ensureServiceAlive(appCtx)
@@ -263,10 +281,17 @@ class PuckAccessibilityService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         return try {
+            val appCtx = applicationContext ?: this
             detachAccessibilityOverlayAnchor()
             isSystemBound = false
             _isBoundState.value = false
             instance = null
+            // Proactive self-heal 200ms after HyperOS unbinds the service in the background
+            mainHandler.postDelayed({
+                try {
+                    PuckPermissionManager.ensureAccessibilityServiceAlive(appCtx, forceImmediate = true)
+                } catch (_: Throwable) {}
+            }, 200L)
             super.onUnbind(intent)
         } catch (_: Throwable) {
             isSystemBound = false
@@ -278,10 +303,16 @@ class PuckAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         try {
+            val appCtx = applicationContext ?: this
             detachAccessibilityOverlayAnchor()
             isSystemBound = false
             _isBoundState.value = false
             instance = null
+            mainHandler.postDelayed({
+                try {
+                    PuckPermissionManager.ensureAccessibilityServiceAlive(appCtx, forceImmediate = true)
+                } catch (_: Throwable) {}
+            }, 200L)
             super.onDestroy()
         } catch (_: Throwable) {
             isSystemBound = false
@@ -300,6 +331,51 @@ class PuckAccessibilityService : AccessibilityService() {
         try {
             // Intentionally no-op with zero-crash protection
         } catch (_: Throwable) {}
+    }
+
+    private fun startForegroundSafely() {
+        try {
+            val notification = buildSharedSilentNotification()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    ACCESSIBILITY_FOREGROUND_NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(ACCESSIBILITY_FOREGROUND_NOTIFICATION_ID, notification)
+            }
+        } catch (_: Throwable) {
+            try {
+                startForeground(ACCESSIBILITY_FOREGROUND_NOTIFICATION_ID, buildSharedSilentNotification())
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun buildSharedSilentNotification(): Notification {
+        val appIntent = Intent(this, MainActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val appPendingIntent = PendingIntent.getActivity(
+            this,
+            2,
+            appIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        return NotificationCompat.Builder(this, SmartPuckApp.CHANNEL_ID)
+            .setContentTitle("Smart Puck Accessibility Active")
+            .setContentText("Instant Screenshot, Lock Screen & Circle to Search ready")
+            .setSmallIcon(android.R.drawable.ic_menu_preferences)
+            .setContentIntent(appPendingIntent)
+            .setOngoing(true)
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setSound(null)
+            .setVibrate(null)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+            .build()
     }
 
     private fun attachAccessibilityOverlayAnchor() {

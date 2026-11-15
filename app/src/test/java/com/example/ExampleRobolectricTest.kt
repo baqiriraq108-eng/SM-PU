@@ -105,9 +105,44 @@ class ExampleRobolectricTest {
     assertEquals(true, com.example.util.PuckPermissionManager.isCircleToSearchZombieState(context))
 
     // 3. Verify WRITE_SECURE_SETTINGS gating: returns false if permission not held
-    assertEquals(false, com.example.util.PuckPermissionManager.trySelfHealAccessibilityBinder(context))
+    com.example.util.PuckPermissionManager.resetSelfHealDebounce()
+    assertEquals(false, com.example.util.PuckPermissionManager.ensureAccessibilityServiceAlive(context))
 
-    // 4. Verify in-process queued recovery accepts actions when OS setting is ON
+    // 4. Grant WRITE_SECURE_SETTINGS and verify Force Toggle-Cycle (Remove -> 80ms -> Re-Add)
+    val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+    org.robolectric.Shadows.shadowOf(app).grantPermissions(android.Manifest.permission.WRITE_SECURE_SETTINGS)
+    com.example.util.PuckPermissionManager.resetSelfHealDebounce()
+
+    val healTriggered = com.example.util.PuckPermissionManager.ensureAccessibilityServiceAlive(
+      context = context,
+      forceImmediate = true
+    )
+    assertEquals(true, healTriggered)
+
+    // Immediately after Phase A (0ms), our component was stripped from ENABLED_ACCESSIBILITY_SERVICES
+    val duringFlush = android.provider.Settings.Secure.getString(
+      context.contentResolver,
+      android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+    ) ?: ""
+    assertEquals(false, duringFlush.contains("PuckAccessibilityService"))
+
+    // Advance main looper by 100ms (>= 80ms flush delay) and verify Phase B re-added the component
+    org.robolectric.shadows.ShadowLooper.idleMainLooper(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+    val afterReAdd = android.provider.Settings.Secure.getString(
+      context.contentResolver,
+      android.provider.Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+    ) ?: ""
+    assertEquals(true, afterReAdd.contains(componentString))
+    assertEquals(
+      1,
+      android.provider.Settings.Secure.getInt(
+        context.contentResolver,
+        android.provider.Settings.Secure.ACCESSIBILITY_ENABLED,
+        0
+      )
+    )
+
+    // 5. Verify in-process queued recovery accepts actions when OS setting is ON
     assertEquals(true, com.example.util.PuckPermissionManager.executeLockScreen(context))
     assertEquals(true, com.example.util.PuckPermissionManager.executeScreenshot(context))
     assertEquals(true, com.example.util.PuckPermissionManager.executeCircleToSearch(context, 850L))

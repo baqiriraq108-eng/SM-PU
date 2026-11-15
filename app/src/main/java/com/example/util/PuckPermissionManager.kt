@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.UserManager
 import android.provider.Settings
 import android.text.TextUtils
@@ -19,26 +20,34 @@ import com.example.data.PuckPreferences
 import com.example.service.PuckAccessibilityService
 import com.example.service.PuckDeviceAdminReceiver
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Clean, root-cause Permission & Capability Engine for Smart Puck on Android 16 and Xiaomi HyperOS.
+ * HyperOS-Exclusive Accessibility Anti-Kill & Force Toggle-Cycle Self-Healing Engine.
  *
- * Three dedicated, independent pipelines:
- * 1. Lock Screen Pipeline ([isLockScreenGranted], [isLockScreenZombieState], [executeLockScreen])
- * 2. Screenshot Pipeline ([isScreenshotGranted], [isScreenshotZombieState], [executeScreenshot])
- * 3. Circle to Search Pipeline ([isCircleToSearchGranted], [isCircleToSearchZombieState], [executeCircleToSearch])
- *
- * Guarantees:
- * - Never calls `PackageManager.setComponentEnabledSetting(DISABLED)` (which would strip the toggle from Android Settings).
- * - Only runs `Settings.Secure` self-healing if `Manifest.permission.WRITE_SECURE_SETTINGS` is explicitly granted.
- * - Reports honest permission status using live binder state ([PuckAccessibilityService.isServiceAliveAndBound])
- *   plus OS `ENABLED_ACCESSIBILITY_SERVICES` (and `DevicePolicyManager` for Lock Screen) without misleading stale checkmarks.
+ * Implements:
+ * - [ensureAccessibilityServiceAlive]: Checks if [PuckAccessibilityService] is null or disconnected.
+ *   If disconnected and `WRITE_SECURE_SETTINGS` is granted, performs a Hard Toggle Cycle:
+ *   1. Removes both full (`$pkg/$cls`) and short (`$pkg/${cls.removePrefix(pkg)}`) component names from
+ *      `Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES` and writes the cleaned string.
+ *   2. Flushes `Settings.Secure.ACCESSIBILITY_ENABLED = 0` (if no other services remain) and waits `80ms`.
+ *   3. Appends `$pkg/$cls` back into `ENABLED_ACCESSIBILITY_SERVICES` and sets `ACCESSIBILITY_ENABLED = 1`.
+ *   4. Awaits `onServiceConnected` callback (up to `350ms` timeout) so actions execute seamlessly.
  */
 object PuckPermissionManager {
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private val isSelfHealInFlight = AtomicBoolean(false)
-    private const val BINDER_RECOVERY_TIMEOUT_MS = 2500L
+    private val lastSelfHealTimeMs = AtomicLong(0L)
+
+    private const val SELF_HEAL_DEBOUNCE_MS = 3000L
+    private const val TOGGLE_FLUSH_DELAY_MS = 80L
+    private const val REBIND_WAIT_TIMEOUT_MS = 350L
+
+    fun resetSelfHealDebounce() {
+        isSelfHealInFlight.set(false)
+        lastSelfHealTimeMs.set(0L)
+    }
 
     /**
      * Checks whether credential-encrypted storage is unlocked (`UserManager.isUserUnlocked`),
@@ -57,11 +66,170 @@ object PuckPermissionManager {
         }
     }
 
-    // =========================================================================
-    // AUTHORITATIVE OS & SELF-HEALING ENGINE
-    // =========================================================================
-
     fun isAccessibilityBound(): Boolean = PuckAccessibilityService.isServiceAliveAndBound()
+
+    fun hasWriteSecureSettings(context: Context): Boolean {
+        return try {
+            val appContext = context.applicationContext ?: context
+            appContext.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) ==
+                PackageManager.PERMISSION_GRANTED
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * HyperOS Force Toggle-Cycle Self-Healing helper (`ensureAccessibilityServiceAlive`).
+     *
+     * - If [PuckAccessibilityService.isServiceAliveAndBound] is already true, invokes [onReady](true)
+     *   immediately (0ms) and returns `true`.
+     * - If disconnected and `WRITE_SECURE_SETTINGS` is granted, performs the HyperOS Force Toggle-Cycle
+     *   (`Remove -> 80ms Flush -> Re-Add -> ACCESSIBILITY_ENABLED = 1`) and awaits `onServiceConnected`
+     *   (or 350ms timeout) before invoking [onReady].
+     */
+    fun ensureAccessibilityServiceAlive(
+        context: Context,
+        forceImmediate: Boolean = false,
+        onReady: ((Boolean) -> Unit)? = null
+    ): Boolean {
+        val appContext = context.applicationContext ?: context
+
+        // 1. Fast path: already alive and system-bound
+        if (PuckAccessibilityService.isServiceAliveAndBound()) {
+            onReady?.invoke(true)
+            return true
+        }
+
+        // 2. Check WRITE_SECURE_SETTINGS permission
+        if (!hasWriteSecureSettings(appContext)) {
+            if (onReady != null) {
+                if (isAccessibilityEnabledInOs(appContext)) {
+                    PuckAccessibilityService.awaitBinderAndExecute(
+                        timeoutMs = REBIND_WAIT_TIMEOUT_MS,
+                        onConnected = { onReady.invoke(true) },
+                        onTimeout = { onReady.invoke(PuckAccessibilityService.isServiceAliveAndBound()) }
+                    )
+                } else {
+                    onReady.invoke(false)
+                }
+            }
+            return false
+        }
+
+        // 3. Debounce guard (3000ms) so rapid touch events don't overlap Settings.Secure writes
+        val nowMs = SystemClock.uptimeMillis()
+        val lastMs = lastSelfHealTimeMs.get()
+        if (!forceImmediate && (isSelfHealInFlight.get() || (lastMs > 0L && (nowMs - lastMs) < SELF_HEAL_DEBOUNCE_MS))) {
+            if (onReady != null) {
+                PuckAccessibilityService.awaitBinderAndExecute(
+                    timeoutMs = REBIND_WAIT_TIMEOUT_MS,
+                    onConnected = { onReady.invoke(true) },
+                    onTimeout = { onReady.invoke(PuckAccessibilityService.isServiceAliveAndBound()) }
+                )
+            }
+            return true
+        }
+
+        isSelfHealInFlight.set(true)
+        lastSelfHealTimeMs.set(nowMs)
+
+        return try {
+            val resolver = appContext.contentResolver
+            val pkg = appContext.packageName
+            val cls = PuckAccessibilityService::class.java.name
+            val simpleName = PuckAccessibilityService::class.java.simpleName
+            val fullComponent = "$pkg/$cls"
+            val shortComponent = "$pkg/${cls.removePrefix(pkg)}"
+            val flattened = ComponentName(appContext, PuckAccessibilityService::class.java).flattenToString()
+            val shortFlattened = ComponentName(appContext, PuckAccessibilityService::class.java).flattenToShortString()
+
+            val currentRaw = Settings.Secure.getString(
+                resolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            ) ?: ""
+
+            // Step A: Remove all variants of our service from ENABLED_ACCESSIBILITY_SERVICES
+            val withoutSelf = currentRaw.split(":")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .filterNot {
+                    it.equals(fullComponent, ignoreCase = true) ||
+                        it.equals(shortComponent, ignoreCase = true) ||
+                        it.equals(flattened, ignoreCase = true) ||
+                        it.equals(shortFlattened, ignoreCase = true) ||
+                        it.contains(simpleName, ignoreCase = true)
+                }
+
+            val cleanedString = withoutSelf.joinToString(":")
+            Settings.Secure.putString(
+                resolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                cleanedString
+            )
+            if (withoutSelf.isEmpty()) {
+                Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0)
+            }
+
+            // Register callback waiter BEFORE the 80ms re-add so we catch onServiceConnected the instant it fires
+            if (onReady != null) {
+                PuckAccessibilityService.awaitBinderAndExecute(
+                    timeoutMs = TOGGLE_FLUSH_DELAY_MS + REBIND_WAIT_TIMEOUT_MS,
+                    onConnected = {
+                        isSelfHealInFlight.set(false)
+                        onReady.invoke(true)
+                    },
+                    onTimeout = {
+                        isSelfHealInFlight.set(false)
+                        onReady.invoke(PuckAccessibilityService.isServiceAliveAndBound())
+                    }
+                )
+            }
+
+            // Step B: Wait 80ms for HyperOS AccessibilityManagerService to flush the unbind,
+            // then re-append "$pkg/$cls" and enable accessibility.
+            mainHandler.postDelayed({
+                try {
+                    val refreshedRaw = Settings.Secure.getString(
+                        resolver,
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                    ) ?: ""
+                    val currentList = refreshedRaw.split(":")
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .filterNot {
+                            it.equals(fullComponent, ignoreCase = true) ||
+                                it.equals(shortComponent, ignoreCase = true) ||
+                                it.contains(simpleName, ignoreCase = true)
+                        }
+                        .toMutableList()
+
+                    currentList.add(fullComponent)
+                    Settings.Secure.putString(
+                        resolver,
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                        currentList.joinToString(":")
+                    )
+                    Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+                } catch (_: Throwable) {
+                } finally {
+                    isSelfHealInFlight.set(false)
+                }
+            }, TOGGLE_FLUSH_DELAY_MS)
+
+            true
+        } catch (_: Throwable) {
+            isSelfHealInFlight.set(false)
+            onReady?.invoke(false)
+            false
+        }
+    }
+
+    /**
+     * Alias for backwards compatibility with existing callers/tests.
+     */
+    fun trySelfHealAccessibilityBinder(context: Context): Boolean {
+        return ensureAccessibilityServiceAlive(context)
+    }
 
     /**
      * Authoritatively inspects Android OS settings and AccessibilityManager to determine
@@ -147,72 +315,6 @@ object PuckPermissionManager {
         }
     }
 
-    /**
-     * Only attempts `Settings.Secure` self-healing if `Manifest.permission.WRITE_SECURE_SETTINGS`
-     * is explicitly granted. Never disables the service component via PackageManager.
-     */
-    fun trySelfHealAccessibilityBinder(context: Context): Boolean {
-        val appContext = context.applicationContext ?: context
-        val hasWriteSecure = try {
-            appContext.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
-        } catch (_: Throwable) {
-            false
-        }
-        if (!hasWriteSecure) return false
-
-        if (!isSelfHealInFlight.compareAndSet(false, true)) {
-            return true
-        }
-
-        return try {
-            val resolver = appContext.contentResolver
-            val componentName = ComponentName(appContext, PuckAccessibilityService::class.java)
-            val flattened = componentName.flattenToString()
-            val shortFlattened = componentName.flattenToShortString()
-            val simpleName = PuckAccessibilityService::class.java.simpleName
-
-            val currentRaw = Settings.Secure.getString(
-                resolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-            ) ?: ""
-
-            val withoutSelf = currentRaw.split(":")
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .filterNot {
-                    it.equals(flattened, ignoreCase = true) ||
-                        it.equals(shortFlattened, ignoreCase = true) ||
-                        it.contains(simpleName, ignoreCase = true)
-                }
-
-            Settings.Secure.putString(
-                resolver,
-                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-                withoutSelf.joinToString(":")
-            )
-            Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 0)
-
-            val updatedList = withoutSelf.toMutableList().apply { add(flattened) }
-            mainHandler.postDelayed({
-                try {
-                    Settings.Secure.putString(
-                        resolver,
-                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
-                        updatedList.joinToString(":")
-                    )
-                    Settings.Secure.putInt(resolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
-                } catch (_: Throwable) {
-                } finally {
-                    isSelfHealInFlight.set(false)
-                }
-            }, 150L)
-            true
-        } catch (_: Throwable) {
-            isSelfHealInFlight.set(false)
-            false
-        }
-    }
-
     fun onDeviceAdminEnabled(context: Context) {
         if (isUserUnlocked(context)) {
             PuckPreferences(context).latchLockPermission()
@@ -241,19 +343,13 @@ object PuckPermissionManager {
     }
 
     // =========================================================================
-    // PIPELINE 1: LOCK SCREEN (DEDICATED & INDEPENDENT)
+    // PIPELINE 1: LOCK SCREEN
     // =========================================================================
 
-    /**
-     * Honest Lock Screen status: true ONLY when live Accessibility binder is bound OR Device Admin is active.
-     */
     fun isLockScreenGranted(context: Context): Boolean {
         return PuckAccessibilityService.isServiceAliveAndBound() || isDeviceAdminActive(context)
     }
 
-    /**
-     * True when OS Settings toggle is ON, Device Admin is inactive, and Accessibility binder is dead ("Not working").
-     */
     fun isLockScreenZombieState(context: Context): Boolean {
         return !PuckAccessibilityService.isServiceAliveAndBound() &&
             !isDeviceAdminActive(context) &&
@@ -272,43 +368,36 @@ object PuckPermissionManager {
             return true
         }
 
-        // 2. Fast path: Active Device Policy Manager (Device Admin)
+        // 2. Fast path: Active Device Admin
         if (lockViaDeviceAdmin(appContext)) {
             onResult?.invoke(true)
             return true
         }
 
-        // 3. If OS toggle is ON while binder is unbound, try WRITE_SECURE_SETTINGS self-heal (if granted) + wait
-        if (!isAccessibilityEnabledInOs(appContext)) {
+        // 3. Attempt automatic self-healing via WRITE_SECURE_SETTINGS or OS rebind wait
+        val canHealOrWait = hasWriteSecureSettings(appContext) || isAccessibilityEnabledInOs(appContext)
+        if (!canHealOrWait) {
             onResult?.invoke(false)
             return false
         }
 
-        trySelfHealAccessibilityBinder(appContext)
-        PuckKeepAliveManager.ensureServiceAlive(appContext)
-
-        PuckAccessibilityService.awaitBinderAndExecute(
-            timeoutMs = BINDER_RECOVERY_TIMEOUT_MS,
-            onConnected = {
-                val locked = PuckAccessibilityService.lockScreen() || lockViaDeviceAdmin(appContext)
-                onResult?.invoke(locked)
-            },
-            onTimeout = {
-                if (lockViaDeviceAdmin(appContext)) {
-                    onResult?.invoke(true)
-                } else {
-                    showNonIntrusiveFailureToast(
-                        appContext,
-                        "Accessibility service disconnected — re-enable Lock Screen in Settings"
-                    )
-                    onResult?.invoke(false)
-                }
+        ensureAccessibilityServiceAlive(appContext, forceImmediate = true) {
+            val locked = PuckAccessibilityService.lockScreen() || lockViaDeviceAdmin(appContext)
+            if (!locked) {
+                showNonIntrusiveFailureToast(
+                    appContext,
+                    "Accessibility service disconnected — re-enable Lock Screen in Settings"
+                )
             }
-        )
+            onResult?.invoke(locked)
+        }
         return true
     }
 
     fun requestLockScreenAccessibility(context: Context) {
+        if (ensureAccessibilityServiceAlive(context, forceImmediate = true)) {
+            return
+        }
         openAccessibilitySettings(context, "Toggle 'Smart Puck Accessibility Lock' Off & On in Accessibility settings")
     }
 
@@ -330,19 +419,13 @@ object PuckPermissionManager {
     }
 
     // =========================================================================
-    // PIPELINE 2: SCREENSHOT (DEDICATED & INDEPENDENT)
+    // PIPELINE 2: INSTANT SCREENSHOT
     // =========================================================================
 
-    /**
-     * Honest Screenshot status: true ONLY when Accessibility binder is actively bound.
-     */
     fun isScreenshotGranted(context: Context): Boolean {
         return PuckAccessibilityService.isServiceAliveAndBound()
     }
 
-    /**
-     * True when OS Settings toggle is ON while Accessibility binder is unbound ("Not working").
-     */
     fun isScreenshotZombieState(context: Context): Boolean {
         return !PuckAccessibilityService.isServiceAliveAndBound() && isAccessibilityEnabledInOs(context)
     }
@@ -353,66 +436,51 @@ object PuckPermissionManager {
     ): Boolean {
         val appContext = context.applicationContext ?: context
 
-        // 1. Fast path: Live Accessibility Service binder
+        // 1. Fast path: Live Accessibility Service binder (0ms)
         if (PuckAccessibilityService.isServiceAliveAndBound() && PuckAccessibilityService.takeScreenshot()) {
             onCompleted?.invoke(true)
             return true
         }
 
-        // 2. If OS toggle is ON while binder is unbound, try WRITE_SECURE_SETTINGS self-heal (if granted) + wait
-        if (!isAccessibilityEnabledInOs(appContext)) {
+        // 2. Disconnected: Run Force Toggle-Cycle self-heal (or wait if enabled in OS)
+        val canHealOrWait = hasWriteSecureSettings(appContext) || isAccessibilityEnabledInOs(appContext)
+        if (!canHealOrWait) {
             onCompleted?.invoke(false)
             return false
         }
 
-        trySelfHealAccessibilityBinder(appContext)
-        PuckKeepAliveManager.ensureServiceAlive(appContext)
-
-        PuckAccessibilityService.awaitBinderAndExecute(
-            timeoutMs = BINDER_RECOVERY_TIMEOUT_MS,
-            onConnected = {
-                val captured = PuckAccessibilityService.takeScreenshot()
-                onCompleted?.invoke(captured)
-            },
-            onTimeout = {
+        ensureAccessibilityServiceAlive(appContext, forceImmediate = true) {
+            val captured = PuckAccessibilityService.takeScreenshot()
+            if (!captured) {
                 showNonIntrusiveFailureToast(
                     appContext,
                     "Accessibility service disconnected — re-enable for Screenshot"
                 )
-                onCompleted?.invoke(false)
             }
-        )
+            onCompleted?.invoke(captured)
+        }
         return true
     }
 
     fun requestScreenshotAccessibility(context: Context) {
+        if (ensureAccessibilityServiceAlive(context, forceImmediate = true)) {
+            return
+        }
         openAccessibilitySettings(context, "Toggle 'Smart Puck Accessibility Lock' Off & On for Screenshot")
     }
 
     // =========================================================================
-    // PIPELINE 3: CIRCLE TO SEARCH (DEDICATED & INDEPENDENT)
+    // PIPELINE 3: CIRCLE TO SEARCH
     // =========================================================================
 
-    /**
-     * Honest Circle to Search status: true ONLY when Accessibility binder is actively bound.
-     */
     fun isCircleToSearchGranted(context: Context): Boolean {
         return PuckAccessibilityService.isServiceAliveAndBound()
     }
 
-    /**
-     * True when OS Settings toggle is ON while Accessibility binder is unbound ("Not working").
-     */
     fun isCircleToSearchZombieState(context: Context): Boolean {
         return !PuckAccessibilityService.isServiceAliveAndBound() && isAccessibilityEnabledInOs(context)
     }
 
-    /**
-     * Executes Circle to Search bottom navigation bar press-and-hold gesture with:
-     * - Zero Voice Search / Assistant intent fallbacks.
-     * - Upfront `WRITE_SECURE_SETTINGS` binder self-healing (if granted) BEFORE the 2500ms wait.
-     * - Non-silent failure handling: restores the puck and shows a concise toast on dead binder.
-     */
     fun executeCircleToSearch(
         context: Context,
         holdDurationMs: Long = 850L,
@@ -420,7 +488,7 @@ object PuckPermissionManager {
     ): Boolean {
         val appContext = context.applicationContext ?: context
 
-        // 1. Fast path: Live Accessibility Service binder
+        // 1. Fast path: Live Accessibility Service binder (0ms)
         if (PuckAccessibilityService.isServiceAliveAndBound()) {
             val dispatched = PuckAccessibilityService.triggerCircleToSearch(
                 holdDurationMs = holdDurationMs,
@@ -433,8 +501,9 @@ object PuckPermissionManager {
             }
         }
 
-        // 2. If OS toggle is ON while binder is unbound, try WRITE_SECURE_SETTINGS self-heal (if granted) + wait
-        if (!isAccessibilityEnabledInOs(appContext)) {
+        // 2. Disconnected: Run Force Toggle-Cycle self-heal (or wait if enabled in OS)
+        val canHealOrWait = hasWriteSecureSettings(appContext) || isAccessibilityEnabledInOs(appContext)
+        if (!canHealOrWait) {
             showNonIntrusiveFailureToast(
                 appContext,
                 "Enable 'Smart Puck Accessibility Lock' in Accessibility settings for Circle to Search"
@@ -443,34 +512,28 @@ object PuckPermissionManager {
             return false
         }
 
-        trySelfHealAccessibilityBinder(appContext)
-        PuckKeepAliveManager.ensureServiceAlive(appContext)
-
-        PuckAccessibilityService.awaitBinderAndExecute(
-            timeoutMs = BINDER_RECOVERY_TIMEOUT_MS,
-            onConnected = {
-                val dispatched = PuckAccessibilityService.triggerCircleToSearch(
-                    holdDurationMs = holdDurationMs,
-                    allowRetryOnCancel = true
-                ) { success ->
-                    onCompleted?.invoke(success)
-                }
-                if (!dispatched) {
-                    onCompleted?.invoke(false)
-                }
-            },
-            onTimeout = {
+        ensureAccessibilityServiceAlive(appContext, forceImmediate = true) {
+            val dispatched = PuckAccessibilityService.triggerCircleToSearch(
+                holdDurationMs = holdDurationMs,
+                allowRetryOnCancel = true
+            ) { success ->
+                onCompleted?.invoke(success)
+            }
+            if (!dispatched) {
                 showNonIntrusiveFailureToast(
                     appContext,
                     "Accessibility service disconnected — re-enable for Circle to Search"
                 )
                 onCompleted?.invoke(false)
             }
-        )
+        }
         return true
     }
 
     fun requestCircleToSearchAccessibility(context: Context) {
+        if (ensureAccessibilityServiceAlive(context, forceImmediate = true)) {
+            return
+        }
         openAccessibilitySettings(context, "Toggle 'Smart Puck Accessibility Lock' Off & On for Circle to Search")
     }
 

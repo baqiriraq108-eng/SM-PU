@@ -95,9 +95,15 @@ fun HomeScreen(
 
     LaunchedEffect(isAccessibilityBound) {
         refreshAllStates()
-        if (isAccessibilityEnabledInOs && !PuckAccessibilityService.isServiceAliveAndBound()) {
-            if (PuckPermissionManager.trySelfHealAccessibilityBinder(context)) {
-                delay(400L)
+        if (!PuckAccessibilityService.isServiceAliveAndBound()) {
+            val triggered = PuckPermissionManager.ensureAccessibilityServiceAlive(
+                context = context,
+                forceImmediate = true
+            ) {
+                refreshAllStates()
+            }
+            if (triggered) {
+                delay(350L)
                 refreshAllStates()
             }
         }
@@ -107,6 +113,14 @@ fun HomeScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 refreshAllStates()
+                if (!PuckAccessibilityService.isServiceAliveAndBound()) {
+                    PuckPermissionManager.ensureAccessibilityServiceAlive(
+                        context = context,
+                        forceImmediate = true
+                    ) {
+                        refreshAllStates()
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
