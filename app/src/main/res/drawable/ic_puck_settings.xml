@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Precision Geometric Smart Puck Settings Glyph: Sculpted Hex-Dial + Puck Core Ring & Dot -->
+    <!-- 6-point precision mechanical dial spokes -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M12,2.5V5.0M12,19.0V21.5M3.8,7.2L6.0,8.5M18.0,15.5L20.2,16.8M20.2,7.2L18.0,8.5M6.0,15.5L3.8,16.8" />
+    <!-- Outer sculpted control ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12,12m-6.8,0a6.8,6.8 0 1,0 13.6,0a6.8,6.8 0 1,0 -13.6,0" />
+    <!-- Inner Smart Puck ring -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:pathData="M12,12m-3.2,0a3.2,3.2 0 1,0 6.4,0a3.2,3.2 0 1,0 -6.4,0" />
+    <!-- Precision focal center dot -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,12m-1.3,0a1.3,1.3 0 1,0 2.6,0a1.3,1.3 0 1,0 -2.6,0" />
+</vector>

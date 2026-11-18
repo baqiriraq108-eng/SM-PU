@@ -1418,24 +1418,41 @@ class FloatingPuckService : Service() {
             setPadding(dpToPx(4), dpToPx(6), dpToPx(4), dpToPx(6))
         }
 
-        // Helpers for modern row styling
-        fun createLeadingContainer(isDrawable: Boolean, resId: Int = 0, emoji: String = "", isActive: Boolean = false): FrameLayout {
-            val frame = FrameLayout(context).apply {
-                background = GradientDrawable().apply {
-                    setColor(0xFF2A1E18.toInt()) // Deep cocoa background
-                    cornerRadius = dpToPx(10).toFloat()
-                }
-                layoutParams = LinearLayout.LayoutParams(dpToPx(34), dpToPx(34))
+        // Helpers for modern unified vector row styling (Uniform Standard Brown Palette)
+        fun updateLeadingBadgeState(frame: FrameLayout, @Suppress("UNUSED_PARAMETER") isActive: Boolean = false) {
+            frame.background = GradientDrawable().apply {
+                setColor(0xFF2A1E18.toInt()) // Standard deep cocoa brown background
+                cornerRadius = dpToPx(11).toFloat()
+                setStroke(dpToPx(1), 0xFF3E2D24.toInt()) // Standard warm brown border
             }
-            if (isDrawable) {
+            val tint = 0xFFD6C5B6.toInt() // Uniform standard warm brown/taupe icon tint for all shortcuts
+            val child = frame.getChildAt(0)
+            if (child is ImageView) {
+                child.setColorFilter(tint)
+            } else if (child is TextView) {
+                child.setTextColor(tint)
+            }
+        }
+
+        fun createLeadingContainer(
+            isDrawable: Boolean = true,
+            resId: Int = 0,
+            emoji: String = "",
+            isActive: Boolean = false
+        ): FrameLayout {
+            val frame = FrameLayout(context).apply {
+                layoutParams = LinearLayout.LayoutParams(dpToPx(36), dpToPx(36))
+            }
+            if (isDrawable && resId != 0) {
                 val iv = ImageView(context).apply {
                     setImageResource(resId)
                     val p = dpToPx(7)
                     setPadding(p, p, p, p)
                     scaleType = ImageView.ScaleType.FIT_CENTER
-                    val tint = if (isActive) 0xFFE5BC82.toInt() else 0xFFD6C5B6.toInt()
-                    setColorFilter(tint)
-                    layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
                 }
                 frame.addView(iv)
             } else {
@@ -1443,11 +1460,14 @@ class FloatingPuckService : Service() {
                     text = emoji
                     textSize = 16f
                     gravity = Gravity.CENTER
-                    setTextColor(if (isActive) 0xFFE5BC82.toInt() else 0xFFD6C5B6.toInt())
-                    layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
                 }
                 frame.addView(tv)
             }
+            updateLeadingBadgeState(frame, isActive)
             return frame
         }
 
@@ -1480,17 +1500,23 @@ class FloatingPuckService : Service() {
         }
 
         fun createToggleSwitch(initialOn: Boolean, onToggle: (Boolean) -> Unit): FrameLayout {
-            val trackW = dpToPx(42)
-            val trackH = dpToPx(22)
+            val trackW = dpToPx(44)
+            val trackH = dpToPx(24)
             val thumbS = dpToPx(18)
             val maxSlide = dpToPx(20)
 
             var isOn = initialOn
 
-            val trackBg = GradientDrawable().apply {
-                setColor(if (isOn) 0xFF7D593E.toInt() else 0xFF3A2B23.toInt())
-                cornerRadius = dpToPx(11).toFloat()
+            fun styleTrack(bg: GradientDrawable, active: Boolean) {
+                bg.setColor(if (active) 0xFF7D593E.toInt() else 0xFF3A2B23.toInt())
+                bg.cornerRadius = dpToPx(12).toFloat()
+                bg.setStroke(
+                    dpToPx(1),
+                    if (active) 0xFF8E684C.toInt() else 0xFF46352C.toInt()
+                )
             }
+
+            val trackBg = GradientDrawable().also { styleTrack(it, isOn) }
             val track = FrameLayout(context).apply {
                 background = trackBg
                 layoutParams = LinearLayout.LayoutParams(trackW, trackH)
@@ -1504,7 +1530,7 @@ class FloatingPuckService : Service() {
                 background = thumbBg
                 val p = FrameLayout.LayoutParams(thumbS, thumbS).apply {
                     gravity = Gravity.CENTER_VERTICAL or Gravity.START
-                    setMargins(dpToPx(2), 0, dpToPx(2), 0)
+                    setMargins(dpToPx(3), 0, dpToPx(3), 0)
                 }
                 layoutParams = p
                 translationX = if (isOn) maxSlide.toFloat() else 0f
@@ -1513,9 +1539,9 @@ class FloatingPuckService : Service() {
 
             track.setOnClickListener {
                 isOn = !isOn
-                trackBg.setColor(if (isOn) 0xFF7D593E.toInt() else 0xFF3A2B23.toInt())
+                styleTrack(trackBg, isOn)
                 thumbBg.setColor(if (isOn) 0xFFF8EFE6.toInt() else 0xFF8E7C6E.toInt())
-                thumb.animate().translationX(if (isOn) maxSlide.toFloat() else 0f).setDuration(140).start()
+                thumb.animate().translationX(if (isOn) maxSlide.toFloat() else 0f).setDuration(150).start()
                 onToggle(isOn)
             }
             return track
@@ -1536,6 +1562,10 @@ class FloatingPuckService : Service() {
                 val bg = GradientDrawable().apply {
                     setColor(if (isSel) 0xFF543E32.toInt() else 0xFF251A14.toInt())
                     cornerRadius = dpToPx(12).toFloat()
+                    setStroke(
+                        dpToPx(1),
+                        if (isSel) 0xFF6B5041.toInt() else 0xFF382820.toInt()
+                    )
                 }
                 val chip = FrameLayout(context).apply {
                     background = bg
@@ -1550,7 +1580,10 @@ class FloatingPuckService : Service() {
                     typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                     gravity = Gravity.CENTER
                     setTextColor(if (isSel) 0xFFF8EFE6.toInt() else 0xFF8E7C6E.toInt())
-                    layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                    layoutParams = FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.MATCH_PARENT,
+                        FrameLayout.LayoutParams.MATCH_PARENT
+                    )
                 }
                 chip.addView(tv)
                 chip.setOnClickListener { onSelect(idx) }
@@ -1568,7 +1601,7 @@ class FloatingPuckService : Service() {
                     cornerRadius = dpToPx(12).toFloat()
                     setStroke(dpToPx(1), 0xFF46352C.toInt())
                 }
-                layoutParams = LinearLayout.LayoutParams(dpToPx(62), dpToPx(26))
+                layoutParams = LinearLayout.LayoutParams(dpToPx(64), dpToPx(26))
             }
             val tv = TextView(context).apply {
                 text = label
@@ -1576,7 +1609,10 @@ class FloatingPuckService : Service() {
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                 gravity = Gravity.CENTER
                 setTextColor(0xFFE8DCD1.toInt())
-                layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
             }
             frame.addView(tv)
             frame.setOnClickListener { onClick() }
@@ -1601,17 +1637,17 @@ class FloatingPuckService : Service() {
                     LinearLayout.LayoutParams.MATCH_PARENT,
                     dpToPx(1)
                 ).apply {
-                    setMargins(dpToPx(58), 0, dpToPx(12), 0)
+                    setMargins(dpToPx(60), 0, dpToPx(12), 0)
                 }
                 layoutParams = p
                 setBackgroundColor(0xFF30231D.toInt())
             }
         }
 
-        // --- ROW BUILDERS IN EXACT REQUESTED ORDER ---
+        // --- ROW BUILDERS IN EXACT REQUESTED ORDER (UNIFIED VECTOR SUITE) ---
         // 0. Circle to Search — action button only
         val rowCircleToSearch = createRowContainer().apply {
-            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_circle_search, isActive = true)
+            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_circle_search)
             val text = createTextColumn("Circle to Search", "Instant screen search")
             val action = createActionButton("Search") {
                 hidePuckMenu()
@@ -1624,13 +1660,12 @@ class FloatingPuckService : Service() {
 
         // 1. Flashlight — toggle switch only
         val rowFlashlight = createRowContainer().apply {
-            val icon = createLeadingContainer(false, emoji = "🔦", isActive = isFlashlightOn)
+            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_flashlight)
             val text = createTextColumn("Flashlight", if (isFlashlightOn) "On" else "Off")
             val toggle = createToggleSwitch(isFlashlightOn) { isOn ->
                 vibrate()
                 setFlashlight(isOn)
-                val iv = (icon.getChildAt(0) as? TextView)
-                iv?.setTextColor(if (isOn) 0xFFE5BC82.toInt() else 0xFFD6C5B6.toInt())
+                updateLeadingBadgeState(icon, isOn)
                 val sub = (text.getChildAt(1) as? TextView)
                 sub?.text = if (isOn) "On" else "Off"
             }
@@ -1655,8 +1690,8 @@ class FloatingPuckService : Service() {
 
         // 3. Do Not Disturb — toggle switch only
         val rowDnd = createRowContainer().apply {
-            var isDnd = DndSyncManager.checkIsDndActive(context)
-            val icon = createLeadingContainer(false, emoji = "🌙", isActive = isDnd)
+            val isDnd = DndSyncManager.checkIsDndActive(context)
+            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_dnd)
             val text = createTextColumn("Do Not Disturb", if (isDnd) "Total Silence" else "Off")
             val toggle = createToggleSwitch(isDnd) { enable ->
                 vibrate()
@@ -1665,8 +1700,7 @@ class FloatingPuckService : Service() {
                     requestDndPermission()
                 } else {
                     setDndMode(enable)
-                    val iv = (icon.getChildAt(0) as? TextView)
-                    iv?.setTextColor(if (enable) 0xFFE5BC82.toInt() else 0xFFD6C5B6.toInt())
+                    updateLeadingBadgeState(icon, enable)
                     val sub = (text.getChildAt(1) as? TextView)
                     sub?.text = if (enable) "Total Silence" else "Off"
                 }
@@ -1684,7 +1718,7 @@ class FloatingPuckService : Service() {
                 AudioManager.RINGER_MODE_NORMAL -> 1
                 else -> -1
             }
-            val icon = createLeadingContainer(false, emoji = "🔔", isActive = (curIdx == 0))
+            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_audio)
             val text = createTextColumn("Audio Profile", if (curIdx == 0) "Silent" else "Normal")
             val chips = createSegmentedChips("Silent", "Normal", curIdx) { idx ->
                 vibrate()
@@ -1718,7 +1752,7 @@ class FloatingPuckService : Service() {
                 curB in 1..25 -> 1
                 else -> -1
             }
-            val icon = createLeadingContainer(false, emoji = "☀️", isActive = true)
+            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_brightness)
             val text = createTextColumn("Brightness", if (bIdx == 0) "Max 100%" else if (bIdx == 1) "Night 5%" else "Preset")
             val chips = createSegmentedChips("Max", "Night", bIdx) { idx ->
                 vibrate()
@@ -1749,13 +1783,12 @@ class FloatingPuckService : Service() {
             val isRotate = try {
                 Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
             } catch (_: Exception) { false }
-            val icon = createLeadingContainer(false, emoji = "🔄", isActive = isRotate)
+            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_autorotate)
             val text = createTextColumn("Auto-Rotate", if (isRotate) "On" else "Locked")
             val toggle = createToggleSwitch(isRotate) { enable ->
                 vibrate()
                 setAutoRotate(enable)
-                val iv = (icon.getChildAt(0) as? TextView)
-                iv?.setTextColor(if (enable) 0xFFE5BC82.toInt() else 0xFFD6C5B6.toInt())
+                updateLeadingBadgeState(icon, enable)
                 val sub = (text.getChildAt(1) as? TextView)
                 sub?.text = if (enable) "On" else "Locked"
             }
@@ -1766,7 +1799,7 @@ class FloatingPuckService : Service() {
 
         // 7. Smart Puck App — action button only
         val rowApp = createRowContainer().apply {
-            val icon = createLeadingContainer(false, emoji = "⚙️")
+            val icon = createLeadingContainer(true, resId = R.drawable.ic_puck_settings)
             val text = createTextColumn("Smart Puck App", "Open settings")
             val action = createActionButton("Open") {
                 vibrate()
@@ -1936,7 +1969,7 @@ class FloatingPuckService : Service() {
                         LinearLayout.LayoutParams.MATCH_PARENT,
                         dpToPx(1)
                     ).apply {
-                        setMargins(dpToPx(58), 0, dpToPx(12), 0)
+                        setMargins(dpToPx(60), 0, dpToPx(12), 0)
                     }
                     layoutParams = p
                     setBackgroundColor(0xFF30231D.toInt())

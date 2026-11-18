@@ -1,47 +1,52 @@
 package com.example.ui.screens.components
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ManageSearch
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.data.PuckPreferences
 
 data class ShortcutMeta(
     val title: String,
     val subtitle: String,
-    val icon: ImageVector,
+    @DrawableRes val iconRes: Int,
     val color: Color
 )
 
 fun getShortcutMeta(key: String): ShortcutMeta {
+    val standardBrown = Color(0xFFB08968)
     return when (key) {
-        "circle_to_search" -> ShortcutMeta("Circle to Search", "Visual AI", Icons.AutoMirrored.Filled.ManageSearch, Color(0xFF6366F1))
-        "flashlight" -> ShortcutMeta("Flashlight", "Torch", Icons.Default.FlashlightOn, Color(0xFFF59E0B))
-        "screenshot" -> ShortcutMeta("Screenshot", "Capture", Icons.Default.CameraAlt, Color(0xFF06B6D4))
-        "dnd" -> ShortcutMeta("Do Not Disturb", "Silence", Icons.Default.DoNotDisturbOn, Color(0xFF8B5CF6))
-        "audio" -> ShortcutMeta("Audio Profile", "Volume", Icons.Default.VolumeUp, Color(0xFF3B82F6))
-        "brightness" -> ShortcutMeta("Brightness", "Display", Icons.Default.WbSunny, Color(0xFFEAB308))
-        "auto_rotate" -> ShortcutMeta("Auto-Rotate", "Rotation", Icons.Default.ScreenRotation, Color(0xFF14B8A6))
-        "smart_puck_app" -> ShortcutMeta("Settings", "App", Icons.Default.Settings, Color(0xFFF97316))
-        "lock_screen" -> ShortcutMeta("Lock Screen", "Security", Icons.Default.Lock, Color(0xFF10B981))
-        else -> ShortcutMeta(key, "Action", Icons.Default.TouchApp, Color(0xFF64748B))
+        "circle_to_search" -> ShortcutMeta("Circle to Search", "Visual AI", R.drawable.ic_puck_circle_search, standardBrown)
+        "flashlight" -> ShortcutMeta("Flashlight", "Torch", R.drawable.ic_puck_flashlight, standardBrown)
+        "screenshot" -> ShortcutMeta("Screenshot", "Capture", R.drawable.ic_puck_screenshot, standardBrown)
+        "dnd" -> ShortcutMeta("Do Not Disturb", "Silence", R.drawable.ic_puck_dnd, standardBrown)
+        "audio" -> ShortcutMeta("Audio Profile", "Volume", R.drawable.ic_puck_audio, standardBrown)
+        "brightness" -> ShortcutMeta("Brightness", "Display", R.drawable.ic_puck_brightness, standardBrown)
+        "auto_rotate" -> ShortcutMeta("Auto-Rotate", "Rotation", R.drawable.ic_puck_autorotate, standardBrown)
+        "smart_puck_app" -> ShortcutMeta("Settings", "App", R.drawable.ic_puck_settings, standardBrown)
+        "lock_screen" -> ShortcutMeta("Lock Screen", "Security", R.drawable.ic_puck_lock, standardBrown)
+        else -> ShortcutMeta(key, "Action", R.drawable.ic_puck_settings, standardBrown)
     }
 }
 
@@ -147,18 +152,19 @@ fun ShortcutArrangementCard(
 
                             Spacer(modifier = Modifier.width(10.dp))
 
-                            // Colored Icon Pill
+                            // Unified Precision Vector Icon Badge
                             Box(
                                 modifier = Modifier
-                                    .size(34.dp)
-                                    .background(meta.color.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
+                                    .size(36.dp)
+                                    .background(meta.color.copy(alpha = 0.14f), RoundedCornerShape(11.dp))
+                                    .border(1.dp, meta.color.copy(alpha = 0.30f), RoundedCornerShape(11.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = meta.icon,
-                                    contentDescription = null,
+                                    painter = painterResource(id = meta.iconRes),
+                                    contentDescription = meta.title,
                                     tint = meta.color,
-                                    modifier = Modifier.size(18.dp)
+                                    modifier = Modifier.size(19.dp)
                                 )
                             }
 
